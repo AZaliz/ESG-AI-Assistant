@@ -164,6 +164,84 @@ Current tests cover:
 - ranking preference for recent sustainability PDFs
 - URL normalization and relative-link resolution
 
+## Local RAG Workflow
+
+The repo now also includes a local end-to-end RAG flow for ESG PDFs:
+
+1. extract text from one or more PDF reports;
+2. chunk the text into roughly 300 to 500 token sections;
+3. embed the chunks with Albert's embeddings endpoint, preferring a `BGE-M3` model when available;
+4. store vectors in FAISS when installed, or fall back to local NumPy similarity search;
+5. retrieve relevant chunks for a question;
+6. send the retrieved context to Albert chat completions for a grounded answer.
+
+Build an index from the bundled sample report:
+
+```bash
+python3 -m app.cli rag-build
+```
+
+Build from specific PDFs:
+
+```bash
+python3 -m app.cli rag-build \
+  --pdf /absolute/path/to/report.pdf \
+  --pdf /absolute/path/to/another-report.pdf
+```
+
+Preview extraction and chunking without calling Albert:
+
+```bash
+python3 -m app.cli rag-build --dry-run
+```
+
+Ask a grounded question once the index is built:
+
+```bash
+python3 -m app.cli rag-ask "What climate targets are disclosed for 2030?"
+```
+
+Inspect retrieval only:
+
+```bash
+python3 -m app.cli rag-ask "What climate targets are disclosed for 2030?" --search-only
+```
+
+The RAG commands require `ALBERT_API_KEY` for embeddings and answer generation unless you use `--dry-run`.
+
+### Launch the visual interface
+
+Start the local browser UI:
+
+```bash
+python3 -m app.cli rag-web
+```
+
+Then open [http://127.0.0.1:8787](http://127.0.0.1:8787).
+
+The UI lets you:
+
+- build an index from one or more absolute PDF paths;
+- inspect the current vector backend and embedding model;
+- ask ESG questions against the built index;
+- review the retrieved chunks that supported the answer.
+
+### Evaluate Retrieval
+
+Run retrieval evaluation against the bundled ESG QA dataset:
+
+```bash
+python3 -m app.cli rag-eval
+```
+
+Evaluate a specific company explicitly:
+
+```bash
+python3 -m app.cli rag-eval --company TotalEnergies
+```
+
+The command saves JSON and CSV outputs under `outputs/` and reports which questions were clear hits, partial matches, or misses based on the expected supporting context in the dataset.
+
 ## Storage Layout
 
 ```text

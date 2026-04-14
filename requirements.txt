@@ -1,5 +1,7 @@
 beautifulsoup4>=4.12
+faiss-cpu>=1.13
 lxml>=5.2
+numpy>=1.26
 pydantic>=2.8
 rapidfuzz>=3.9
 requests>=2.32
