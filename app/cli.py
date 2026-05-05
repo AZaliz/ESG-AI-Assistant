@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import subprocess
 import sys
 from pathlib import Path
 
@@ -177,6 +178,19 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_BASE_URL,
         help="Albert API base URL.",
     )
+
+    streamlit_ui = subparsers.add_parser("streamlit-ui", help="Launch the Streamlit prompt console")
+    streamlit_ui.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host interface for the Streamlit app.",
+    )
+    streamlit_ui.add_argument(
+        "--port",
+        type=int,
+        default=8501,
+        help="Port for the Streamlit app.",
+    )
     return parser
 
 
@@ -226,6 +240,21 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "rag-eval":
         return run_rag_eval(args)
+
+    if args.command == "streamlit-ui":
+        streamlit_path = Path(__file__).with_name("streamlit_ui.py")
+        command = [
+            sys.executable,
+            "-m",
+            "streamlit",
+            "run",
+            str(streamlit_path),
+            "--server.address",
+            args.host,
+            "--server.port",
+            str(args.port),
+        ]
+        return subprocess.call(command)
 
     pipeline = AcquisitionPipeline()
     seed = seed_from_args(args)

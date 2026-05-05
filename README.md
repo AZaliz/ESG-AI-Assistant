@@ -1,59 +1,81 @@
-# ESG Document Acquisition MVP
+# ESG AI
 
-This project fetches sustainability-related corporate reports with a production-oriented retrieval pipeline designed for heterogeneous issuer websites, inconsistent report naming, redirects, mixed file formats, and partial failures.
+ESG AI is a Python project for two related jobs:
 
-## What It Does
+1. discovering and downloading ESG, sustainability, and climate reports from company websites;
+2. building a local RAG workflow on top of PDF reports so you can search and question them.
 
-For a given company, the pipeline:
+The project is designed for messy real-world company sites where reports may be hard to find, inconsistently named, or spread across different pages.
 
-1. resolves likely canonical issuer domains;
-2. discovers sustainability-report candidates from structured and issuer sources;
-3. ranks candidates with deterministic heuristics;
-4. downloads the best raw file;
-5. extracts basic text and metadata;
-6. stores normalized metadata locally;
-7. can run a live smoke test on the current top European listed companies by market cap.
+## What the Project Does
 
-## Retrieval Strategy
+### Document acquisition
 
-The MVP uses a tiered strategy:
+For a company name, the pipeline can:
 
-- Tier 1: structured sources
-  - current implementation uses a live CompaniesMarketCap adapter for dynamic ranking seeds and company profile hints
-- Tier 2: issuer sources
-  - issuer homepages, sustainability, ESG, investor-relations, publications, and reports pages
-- Tier 3: targeted search fallback
-  - DuckDuckGo HTML search using constrained issuer-domain queries
+- resolve likely issuer domains;
+- discover report candidates from issuer pages and ranking sources;
+- rank the candidates with deterministic heuristics;
+- download the best matching file;
+- extract text from the downloaded document;
+- store metadata, candidate lists, and output files locally.
 
-The design is intentionally modular so the ranking source, structured-source adapters, and heuristics can be extended without rewriting the whole pipeline.
+### Local RAG workflow
+
+For one or more ESG PDFs, the project can:
+
+- extract PDF text;
+- split it into chunks;
+- create embeddings through the Albert API;
+- store a local search index;
+- retrieve relevant chunks for a question;
+- generate a grounded answer from the retrieved context;
+- evaluate retrieval quality against the sample dataset;
+- launch a small local browser UI for indexing and Q&A.
 
 ## Project Structure
 
 ```text
-app/
-  cli.py
-  models.py
-  utils.py
-  company_resolver.py
-  source_discovery.py
-  candidate_ranker.py
-  downloader.py
-  normalizer.py
-  storage.py
-  pipeline.py
-  smoke_test.py
-  ranking_sources.py
-  parsers/
-    pdf_parser.py
-    html_parser.py
-tests/
-requirements.txt
+repo/
+├── app/
+│   ├── cli.py
+│   ├── pipeline.py
+│   ├── rag.py
+│   ├── rag_eval.py
+│   ├── web.py
+│   ├── storage.py
+│   ├── downloader.py
+│   ├── source_discovery.py
+│   ├── company_resolver.py
+│   ├── candidate_ranker.py
+│   ├── ranking_sources.py
+│   └── parsers/
+├── sample_data/
+├── tests/
+├── requirements.txt
+└── README.md
 ```
 
 ## Requirements
 
 - Python 3.11+
-- network access for live discovery and the smoke test
+- Internet access for live document discovery and smoke tests
+- `ALBERT_API_KEY` for RAG embedding and answer generation
+
+## Installation
+
+Run everything from the project root:
+
+```bash
+cd /Users/ems/Desktop/ESG_AI/repo
+```
+
+Create a virtual environment if you want an isolated setup:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
 
 Install dependencies:
 
@@ -61,127 +83,77 @@ Install dependencies:
 python3 -m pip install -r requirements.txt
 ```
 
-## Usage
+## Quick Start
 
-Run all commands from the repo root:
+List available commands:
 
 ```bash
-cd /Users/ems/Desktop/ESG_AI/repo
+python3 -m app.cli --help
 ```
 
-### Discover candidates for one company
+Discover report candidates for a company:
 
 ```bash
 python3 -m app.cli discover --company "ASML"
 ```
 
-You can help resolution by passing known fields:
-
-```bash
-python3 -m app.cli discover --company "ASML" --ticker ASML --country Netherlands --issuer-domain asml.com
-```
-
-### Fetch the best report for one company
+Fetch the best report for a company:
 
 ```bash
 python3 -m app.cli fetch --company "ASML"
 ```
 
-The command saves:
+Build a RAG index from the bundled sample PDF:
 
-- raw files under `data/raw/<company>/`
-- extracted text under `data/text/<company>/`
-- candidate logs under `data/candidates/`
-- metadata in `data/metadata.db`
+```bash
+python3 -m app.cli rag-build
+```
 
-### Run the live smoke test
+Ask a question against the built index:
+
+```bash
+python3 -m app.cli rag-ask "What climate targets are disclosed for 2030?"
+```
+
+## Command Reference
+
+### `discover`
+
+Finds and ranks likely ESG or sustainability report candidates for a company.
+
+```bash
+python3 -m app.cli discover --company "ASML"
+python3 -m app.cli discover --company "ASML" --ticker ASML --country Netherlands --issuer-domain asml.com
+```
+
+### `fetch`
+
+Runs discovery, downloads the best candidate, parses it, and stores the result locally.
+
+```bash
+python3 -m app.cli fetch --company "ASML"
+```
+
+### `smoke-test`
+
+Runs the full acquisition flow on the top European listed companies by market cap.
 
 ```bash
 python3 -m app.cli smoke-test
 python3 -m app.cli smoke-test --top-n 10
 ```
 
-The smoke test:
+### `rag-build`
 
-- fetches the top European listed companies dynamically at runtime from a live ranking page;
-- resolves issuer sources for each company;
-- tries to retrieve the latest sustainability-related report;
-- stores normalized outputs locally;
-- writes a compact summary to `outputs/` as CSV and JSON.
+Builds a local RAG index from one or more PDFs.
 
-## Normalized Document Record
-
-Each fetched document is normalized into this shape:
-
-```json
-{
-  "company_name": "...",
-  "ticker": "...",
-  "country": "...",
-  "report_year": 2025,
-  "document_type": "sustainability_report",
-  "title": "...",
-  "source_url": "...",
-  "final_url": "...",
-  "source_type": "issuer_pdf",
-  "mime_type": "application/pdf",
-  "download_path": "...",
-  "text_path": "...",
-  "file_hash": "...",
-  "published_date": "...",
-  "discovery_confidence": 68.0,
-  "parse_status": "success",
-  "notes": "..."
-}
-```
-
-## Candidate Ranking Heuristics
-
-The candidate ranker is deterministic and scores:
-
-- positive signals
-  - `sustainability report`, `esg report`, `climate report`, `annual report`, `gri index`
-  - recent years in the URL, title, or nearby text
-  - PDF links
-  - path hints like `/sustainability/`, `/esg/`, `/investor/`, `/reports/`
-- negative signals
-  - `press release`, `news`, `blog`, `careers`, `events`, `webcast`
-  - missing year
-  - low company-name similarity
-
-The pipeline always stores a scored list rather than only the final winner.
-
-## Tests
-
-Run the unit tests with:
-
-```bash
-python3 -m pytest
-```
-
-Current tests cover:
-
-- ranking preference for recent sustainability PDFs
-- URL normalization and relative-link resolution
-
-## Local RAG Workflow
-
-The repo now also includes a local end-to-end RAG flow for ESG PDFs:
-
-1. extract text from one or more PDF reports;
-2. chunk the text into roughly 300 to 500 token sections;
-3. embed the chunks with Albert's embeddings endpoint, preferring a `BGE-M3` model when available;
-4. store vectors in FAISS when installed, or fall back to local NumPy similarity search;
-5. retrieve relevant chunks for a question;
-6. send the retrieved context to Albert chat completions for a grounded answer.
-
-Build an index from the bundled sample report:
+Use the bundled sample PDF:
 
 ```bash
 python3 -m app.cli rag-build
 ```
 
-Build from specific PDFs:
+Use your own PDFs:
 
 ```bash
 python3 -m app.cli rag-build \
@@ -189,29 +161,29 @@ python3 -m app.cli rag-build \
   --pdf /absolute/path/to/another-report.pdf
 ```
 
-Preview extraction and chunking without calling Albert:
+Preview extraction and chunking without calling the API:
 
 ```bash
 python3 -m app.cli rag-build --dry-run
 ```
 
-Ask a grounded question once the index is built:
+### `rag-ask`
+
+Retrieves relevant chunks from the local index and answers a question.
 
 ```bash
 python3 -m app.cli rag-ask "What climate targets are disclosed for 2030?"
 ```
 
-Inspect retrieval only:
+Retrieve chunks only:
 
 ```bash
 python3 -m app.cli rag-ask "What climate targets are disclosed for 2030?" --search-only
 ```
 
-The RAG commands require `ALBERT_API_KEY` for embeddings and answer generation unless you use `--dry-run`.
+### `rag-web`
 
-### Launch the visual interface
-
-Start the local browser UI:
+Starts a small local browser UI for indexing documents and asking questions.
 
 ```bash
 python3 -m app.cli rag-web
@@ -219,59 +191,59 @@ python3 -m app.cli rag-web
 
 Then open [http://127.0.0.1:8787](http://127.0.0.1:8787).
 
-The UI lets you:
+### `streamlit-ui`
 
-- build an index from one or more absolute PDF paths;
-- inspect the current vector backend and embedding model;
-- ask ESG questions against the built index;
-- review the retrieved chunks that supported the answer.
+Launches the Streamlit prompt console with a CLI-style dark theme.
 
-### Evaluate Retrieval
+```bash
+python3 -m app.cli streamlit-ui
+```
 
-Run retrieval evaluation against the bundled ESG QA dataset:
+If you prefer to run Streamlit directly:
+
+```bash
+streamlit run app/streamlit_ui.py
+```
+
+The sidebar lets you select any available Albert or local Ollama model, tune `temperature` and `top_k`, and download a free fallback model such as `qwen2.5:7b` when only one model is available.
+
+### `rag-eval`
+
+Evaluates retrieval quality against the sample ESG question dataset.
 
 ```bash
 python3 -m app.cli rag-eval
-```
-
-Evaluate a specific company explicitly:
-
-```bash
 python3 -m app.cli rag-eval --company TotalEnergies
 ```
 
-The command saves JSON and CSV outputs under `outputs/` and reports which questions were clear hits, partial matches, or misses based on the expected supporting context in the dataset.
+## Environment Variables
 
-## Storage Layout
+Set your Albert API key before running `rag-build`, `rag-ask`, or `rag-eval` without `--dry-run`:
 
-```text
-data/
-  metadata.db
-  raw/
-  text/
-  candidates/
-outputs/
-  smoke_test_*.json
-  smoke_test_*.csv
+```bash
+export ALBERT_API_KEY="your-api-key"
 ```
 
-## Current Limitations
+## Output Locations
 
-This MVP is deliberately conservative:
+The project creates local output folders automatically.
 
-- it does not perform OCR for scanned PDFs;
-- it does not use LLMs or semantic matching;
-- Playwright is not the default path and is not yet wired into the main loop;
-- some issuer websites require stronger anti-bot handling or region-specific headers;
-- multilingual labels are only handled through obvious keyword overlap for now;
-- the ranking-source adapter currently depends on CompaniesMarketCap page structure.
+- `data/raw/`: downloaded original files
+- `data/text/`: extracted text files
+- `data/candidates/`: saved candidate rankings
+- `data/metadata.db`: SQLite metadata database
+- `outputs/`: smoke test outputs, RAG index files, and evaluation results
 
-## Likely Extensions
+## Tests
 
-The next places to extend heuristics are:
+Run the test suite with:
 
-- structured adapters for official filing portals or exchange-hosted report directories;
-- a stronger resolver for investor-relations subdomains and corporate website detection;
-- Playwright fallback for JS-heavy report hubs;
-- richer date extraction from landing pages and PDF metadata;
-- duplicate clustering across annual-report, ESG-report, and sustainability-statement variants.
+```bash
+python3 -m pytest
+```
+
+## Notes
+
+- The document acquisition flow depends on live websites, so results can change over time.
+- `faiss-cpu` is included for vector search, but the code also contains a NumPy fallback when FAISS is unavailable.
+- Sample ESG data and a sample PDF are included under `sample_data/`.
