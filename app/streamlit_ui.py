@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import time
+from pathlib import Path
+from typing import Any
 
 import streamlit as st
 
@@ -15,6 +18,11 @@ from app.llm import (
     generate_completion,
     load_model_catalog,
 )
+from app.parsers.html_parser import parse_html
+from app.parsers.pdf_parser import parse_pdf
+
+
+SUPPORTED_UPLOAD_SUFFIXES = {".pdf", ".html", ".htm", ".txt", ".md"}
 
 
 APP_TITLE = "opencode / ESG AI"
@@ -262,6 +270,68 @@ def _render_fallbacks(fallback_models: list[ChatModel]) -> None:
             st.rerun()
 
 
+def _read_uploaded_document(uploaded_file: Any) -> dict[str, str | int]:
+    suffix = Path(uploaded_file.name).suffix.lower()
+    if suffix not in SUPPORTED_UPLOAD_SUFFIXES:
+        raise RuntimeError("Unsupported file type. Upload a PDF, HTML, Markdown, or text file.")
+
+    text = ""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
+        handle.write(uploaded_file.getvalue())
+        temp_path = Path(handle.name)
+
+    try:
+        if suffix == ".pdf":
+            parse_result = parse_pdf(temp_path)
+        elif suffix in {".html", ".htm"}:
+            parse_result = parse_html(temp_path)
+        else:
+            text = temp_path.read_text(encoding="utf-8", errors="ignore").strip()
+            parse_result = None
+            if not text:
+                raise RuntimeError("The uploaded text file was empty.")
+    finally:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    if suffix in {".html", ".htm"} or suffix == ".pdf":
+        text = parse_result.text.strip() if parse_result and parse_result.text else ""
+
+    if not text:
+        raise RuntimeError("No extractable text was found in the uploaded document.")
+
+    page_count = int(parse_result.page_count) if parse_result and parse_result.page_count else 0
+    summary = parse_result.notes if parse_result and parse_result.notes else "Document uploaded successfully."
+    return {
+        "name": uploaded_file.name,
+        "suffix": suffix,
+        "text": text,
+        "page_count": page_count,
+        "summary": summary,
+        "char_count": len(text),
+    }
+
+
+def _build_document_prompt(prompt: str, document: dict[str, str | int]) -> str:
+    document_text = str(document.get("text", ""))
+    char_limit = 20000
+    if len(document_text) > char_limit:
+        document_text = document_text[:char_limit] + "\n\n[Document truncated for context length]"
+
+    return (
+        "Use the uploaded document as primary context. If the document does not contain the answer, say so clearly. "
+        "Cite the document when helpful.\n\n"
+        f"Document: {document.get('name', 'uploaded file')}\n"
+        f"Type: {document.get('suffix', '')}\n"
+        f"Pages: {document.get('page_count', 0)}\n"
+        f"Summary: {document.get('summary', '')}\n\n"
+        f"Document content:\n{document_text}\n\n"
+        f"User question:\n{prompt.strip()}"
+    )
+
+
 def main() -> None:
     st.set_page_config(page_title=APP_TITLE, page_icon=">", layout="wide", initial_sidebar_state="expanded")
     _inject_css()
@@ -269,6 +339,9 @@ def main() -> None:
     flash_status = st.session_state.pop("flash_status", None)
     if flash_status:
         st.success(flash_status)
+
+    st.session_state.setdefault("uploaded_document", None)
+    st.session_state.setdefault("document_context_enabled", True)
 
     api_key = st.sidebar.text_input(
         "Albert API key",
@@ -297,6 +370,43 @@ def main() -> None:
         help="Optional instruction that is prepended before the user prompt.",
     )
 
+    st.sidebar.markdown("### Document")
+    uploaded_file = st.sidebar.file_uploader(
+      "Upload a document",
+      type=["pdf", "txt", "md", "html", "htm"],
+      help="Attach a document so the model can answer questions from it.",
+    )
+    use_uploaded_document = st.sidebar.checkbox(
+      "Use uploaded document in prompt",
+      value=bool(st.session_state.get("uploaded_document")),
+      help="Include the uploaded file as context for the next query.",
+    )
+    st.session_state["document_context_enabled"] = use_uploaded_document
+
+    if uploaded_file is not None and st.sidebar.button("Load document"):
+      try:
+        document_payload = _read_uploaded_document(uploaded_file)
+      except Exception as exc:  # noqa: BLE001
+        st.session_state["flash_status"] = f"Document load failed: {exc}"
+        st.rerun()
+      else:
+        st.session_state["uploaded_document"] = document_payload
+        st.session_state["flash_status"] = (
+          f"Loaded {document_payload['name']} with {document_payload['char_count']} characters."
+        )
+        st.rerun()
+
+    if st.session_state.get("uploaded_document"):
+      document = st.session_state["uploaded_document"]
+      st.sidebar.success(f"Loaded: {document['name']}")
+      st.sidebar.caption(f"{document['char_count']} characters extracted")
+      if st.sidebar.button("Clear document"):
+        st.session_state.pop("uploaded_document", None)
+        st.session_state.pop("last_prompt", None)
+        st.session_state.pop("last_output", None)
+        st.session_state["flash_status"] = "Document cleared."
+        st.rerun()
+
     if warnings:
         for warning in warnings:
             st.sidebar.warning(warning)
@@ -319,7 +429,7 @@ def main() -> None:
             """
 <div class="terminal-panel">
   <h2>Prompt</h2>
-  <p>Type a prompt below, then run it with the selected model.</p>
+  <p>Type a prompt below, then run it with the selected model. When a document is loaded, the model uses it as context.</p>
 </div>
             """,
             unsafe_allow_html=True,
@@ -332,6 +442,19 @@ def main() -> None:
                 label_visibility="collapsed",
             )
             submitted = st.form_submit_button("Run")
+
+        if st.session_state.get("uploaded_document"):
+            document = st.session_state["uploaded_document"]
+            st.markdown(
+                f"""
+<div class="terminal-panel">
+  <h2>Attached Document</h2>
+  <p><strong>{document['name']}</strong></p>
+  <p>{document['char_count']} characters extracted.</p>
+</div>
+                """,
+                unsafe_allow_html=True,
+            )
 
     with right:
         st.markdown(
@@ -352,37 +475,43 @@ def main() -> None:
         )
 
     if submitted:
-        if not selected_model:
-            st.session_state["flash_status"] = "Load at least one model before running a prompt."
+      if not selected_model:
+        st.session_state["flash_status"] = "Load at least one model before running a prompt."
+        st.rerun()
+
+      if not prompt.strip():
+        st.warning("Type a prompt before running the model.")
+      else:
+        final_prompt = prompt
+        if st.session_state.get("document_context_enabled") and st.session_state.get("uploaded_document"):
+          final_prompt = _build_document_prompt(prompt, st.session_state["uploaded_document"])
+
+        started_at = time.perf_counter()
+        with st.spinner(f"Running {selected_model.label} ..."):
+          try:
+            response_text = generate_completion(
+              selected_model,
+              prompt=final_prompt,
+              system_prompt=system_prompt,
+              temperature=temperature,
+              top_k=top_k,
+              api_key=api_key,
+              albert_base_url=albert_base_url,
+              ollama_base_url=ollama_base_url,
+            )
+          except Exception as exc:  # noqa: BLE001
+            st.session_state["last_output"] = f"Error: {exc}"
+            st.session_state["flash_status"] = f"Error: {exc}"
             st.rerun()
-        if not prompt.strip():
-            st.warning("Type a prompt before running the model.")
-        else:
-            started_at = time.perf_counter()
-            with st.spinner(f"Running {selected_model.label} ..."):
-                try:
-                    response_text = generate_completion(
-                        selected_model,
-                        prompt=prompt,
-                        system_prompt=system_prompt,
-                        temperature=temperature,
-                        top_k=top_k,
-                        api_key=api_key,
-                        albert_base_url=albert_base_url,
-                        ollama_base_url=ollama_base_url,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    st.session_state["last_output"] = f"Error: {exc}"
-                    st.session_state["flash_status"] = f"Error: {exc}"
-                    st.rerun()
-                else:
-                    elapsed = time.perf_counter() - started_at
-                    st.session_state["last_output"] = response_text
-                    st.session_state["last_model"] = selected_model.label
-                    st.session_state["last_prompt"] = prompt
-                    st.session_state["last_tuning"] = {"temperature": temperature, "top_k": top_k}
-                    st.session_state["flash_status"] = f"Completed in {elapsed:.2f}s using {selected_model.label}."
-                    st.rerun()
+          else:
+            elapsed = time.perf_counter() - started_at
+            st.session_state["last_output"] = response_text
+            st.session_state["last_model"] = selected_model.label
+            st.session_state["last_prompt"] = prompt
+            st.session_state["last_prompt_with_context"] = final_prompt
+            st.session_state["last_tuning"] = {"temperature": temperature, "top_k": top_k}
+            st.session_state["flash_status"] = f"Completed in {elapsed:.2f}s using {selected_model.label}."
+            st.rerun()
 
     if st.session_state.get("last_output"):
         with st.expander("Last run details", expanded=False):
@@ -394,6 +523,12 @@ def main() -> None:
                 "Prompt history",
                 value=st.session_state.get("last_prompt", ""),
                 height=150,
+                disabled=True,
+            )
+            st.text_area(
+                "Prompt with document context",
+                value=st.session_state.get("last_prompt_with_context", ""),
+                height=180,
                 disabled=True,
             )
 
