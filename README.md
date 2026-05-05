@@ -205,7 +205,7 @@ If you prefer to run Streamlit directly:
 streamlit run app/streamlit_ui.py
 ```
 
-The sidebar lets you select any available Albert or local Ollama model, tune `temperature` and `top_k`, and download a free fallback model such as `qwen2.5:7b` when only one model is available.
+The sidebar lets you select an Albert text-generation model, tune `temperature` and `top_k`, and upload a document to answer from it.
 
 ### `rag-eval`
 

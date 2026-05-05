@@ -248,6 +248,20 @@ def _compact_small_chunks(chunks: list[ChunkRecord], min_tokens: int, max_tokens
     return compacted
 
 
+def _tail_units_by_tokens(units: list[tuple[int, str, int]], overlap_tokens: int) -> list[tuple[int, str, int]]:
+    if overlap_tokens <= 0:
+        return []
+
+    collected: list[tuple[int, str, int]] = []
+    running_total = 0
+    for unit in reversed(units):
+        collected.append(unit)
+        running_total += unit[2]
+        if running_total >= overlap_tokens:
+            break
+    return list(reversed(collected))
+
+
 def chunk_pages(
     pages: list[PageText],
     *,
@@ -256,6 +270,7 @@ def chunk_pages(
     target_tokens: int = 420,
     min_tokens: int = 300,
     max_tokens: int = 500,
+    overlap_tokens: int = 0,
 ) -> list[ChunkRecord]:
     units = _build_units(pages, max_tokens=max_tokens)
     if not units:
@@ -288,8 +303,11 @@ def chunk_pages(
                 source_path=source_path,
             )
         )
-        current_units = [(page_number, text, token_count)]
-        current_tokens = token_count
+        overlap_units = _tail_units_by_tokens(current_units, overlap_tokens)
+        if sum(unit[2] for unit in overlap_units) >= max_tokens:
+            overlap_units = [current_units[-1]]
+        current_units = [*overlap_units, (page_number, text, token_count)]
+        current_tokens = sum(unit[2] for unit in current_units)
 
     if current_units:
         chunks.append(
@@ -312,6 +330,7 @@ def chunk_text(
     target_tokens: int = 420,
     min_tokens: int = 300,
     max_tokens: int = 500,
+    overlap_tokens: int = 0,
 ) -> list[ChunkRecord]:
     pages = [PageText(page_number=1, text=text)]
     return chunk_pages(
@@ -321,6 +340,7 @@ def chunk_text(
         target_tokens=target_tokens,
         min_tokens=min_tokens,
         max_tokens=max_tokens,
+        overlap_tokens=overlap_tokens,
     )
 
 
@@ -348,7 +368,14 @@ def get_index_summary(index_dir: Path) -> dict[str, Any] | None:
     return json.loads(manifest_path.read_text(encoding="utf-8"))
 
 
-def build_chunk_records(pdf_paths: list[Path], *, target_tokens: int, min_tokens: int, max_tokens: int) -> list[ChunkRecord]:
+def build_chunk_records(
+    pdf_paths: list[Path],
+    *,
+    target_tokens: int,
+    min_tokens: int,
+    max_tokens: int,
+    overlap_tokens: int = 0,
+) -> list[ChunkRecord]:
     chunk_records: list[ChunkRecord] = []
     for pdf_path in pdf_paths:
         pages = extract_pdf_pages(pdf_path)
@@ -360,6 +387,7 @@ def build_chunk_records(pdf_paths: list[Path], *, target_tokens: int, min_tokens
                 target_tokens=target_tokens,
                 min_tokens=min_tokens,
                 max_tokens=max_tokens,
+                overlap_tokens=overlap_tokens,
             )
         )
 
@@ -428,6 +456,7 @@ def build_index(
     target_tokens: int,
     min_tokens: int,
     max_tokens: int,
+    overlap_tokens: int = 0,
     batch_size: int,
     embedding_model: str | None = None,
     dry_run: bool = False,
@@ -441,6 +470,7 @@ def build_index(
         target_tokens=target_tokens,
         min_tokens=min_tokens,
         max_tokens=max_tokens,
+        overlap_tokens=overlap_tokens,
     )
     if not chunks:
         raise RuntimeError("No extractable text was found in the provided PDFs.")
@@ -457,6 +487,7 @@ def build_index(
         "target_tokens": target_tokens,
         "min_tokens": min_tokens,
         "max_tokens": max_tokens,
+        "overlap_tokens": overlap_tokens,
         "vector_backend": "none",
     }
 

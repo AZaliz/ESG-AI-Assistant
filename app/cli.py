@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from app.models import CompanySeed
+from app.ingest_target_reports import run_ingest_target_reports
 from app.pipeline import AcquisitionPipeline
 from app.rag import DEFAULT_BASE_URL, DEFAULT_INDEX_DIR, run_rag_ask, run_rag_build
 from app.rag_eval import DEFAULT_EVAL_DATASET, DEFAULT_EVAL_OUTPUT, run_rag_eval
@@ -179,6 +180,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Albert API base URL.",
     )
 
+    ingest_targets = subparsers.add_parser(
+        "ingest-target-reports", help="Download and store the curated ESG report set"
+    )
+    ingest_targets.add_argument(
+        "--output-stem",
+        default="target_esg_report_ingest",
+        help="Output filename stem for the JSON and CSV summary files.",
+    )
+
     streamlit_ui = subparsers.add_parser("streamlit-ui", help="Launch the Streamlit prompt console")
     streamlit_ui.add_argument(
         "--host",
@@ -240,6 +250,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "rag-eval":
         return run_rag_eval(args)
+
+    if args.command == "ingest-target-reports":
+        return run_ingest_target_reports(args)
 
     if args.command == "streamlit-ui":
         streamlit_path = Path(__file__).with_name("streamlit_ui.py")

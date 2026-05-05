@@ -1,20 +1,42 @@
-from app.llm import ChatModel, DEFAULT_FREE_MODELS, suggest_free_fallbacks
+from app import llm
 
 
-def test_suggest_free_fallbacks_when_only_one_model_exists():
-    models = [ChatModel(provider="albert", model_id="model-a", label="Albert | model-a")]
+class DummyResponse:
+    def __init__(self, payload):
+        self._payload = payload
 
-    suggestions = suggest_free_fallbacks(models)
+    def raise_for_status(self):
+        return None
 
-    assert [item.model_id for item in suggestions] == [model_id for model_id, _label in DEFAULT_FREE_MODELS]
-    assert all(item.provider == "ollama" for item in suggestions)
-    assert all(not item.available for item in suggestions)
+    def json(self):
+        return self._payload
 
 
-def test_suggest_free_fallbacks_not_added_when_multiple_models_exist():
-    models = [
-        ChatModel(provider="albert", model_id="model-a", label="Albert | model-a"),
-        ChatModel(provider="ollama", model_id="qwen2.5:7b", label="Ollama | qwen2.5:7b"),
-    ]
+class DummySession:
+    def __init__(self, payload):
+        self.payload = payload
 
-    assert suggest_free_fallbacks(models) == []
+    def get(self, url, timeout):
+        return DummyResponse(self.payload)
+
+
+def test_list_albert_models_filters_and_sorts(monkeypatch):
+    payload = {
+        "data": [
+            {"type": "embedding", "id": "ignored-embedding"},
+            {"type": "text-generation", "id": "z-model"},
+            {"type": "text-generation", "id": "a-model"},
+        ]
+    }
+    monkeypatch.setattr(llm, "_albert_session", lambda api_key: DummySession(payload))
+
+    models = llm.list_albert_models("api-key")
+
+    assert [model.model_id for model in models] == ["a-model", "z-model"]
+    assert [model.label for model in models] == ["Albert | a-model", "Albert | z-model"]
+
+
+def test_build_messages_skips_blank_system_prompt():
+    messages = llm.build_messages("Hello", "   ")
+
+    assert messages == [{"role": "user", "content": "Hello"}]
