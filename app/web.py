@@ -51,214 +51,300 @@ def _render_page(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ESG RAG Studio</title>
+  <title>ESG AI Terminal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
   <style>
     :root {{
-      --ink: #12263a;
-      --ink-soft: #43556a;
-      --paper: #f5f1e8;
-      --card: #fffdf9;
-      --line: #d5c8b3;
-      --accent: #0f766e;
-      --accent-strong: #0b5d58;
-      --alert: #9f1239;
-      --shadow: 0 20px 45px rgba(18, 38, 58, 0.08);
+      --bg-deep: #07080e;
+      --bg-surface: #0d0f1a;
+      --bg-elevated: #131522;
+      --bg-input: #0a0b14;
+      --border: #1a1c2e;
+      --border-hover: #252840;
+      --text-primary: #e1e4f0;
+      --text-secondary: #8b8fa8;
+      --text-muted: #5c607a;
+      --accent-green: #10b981;
+      --accent-green-strong: #059669;
+      --accent-coral: #f43f5e;
+      --accent-cyan: #22d3ee;
+      --glow-green: rgba(16,185,129,0.18);
+      --glow-coral: rgba(244,63,94,0.18);
+      --radius: 10px;
+      --radius-sm: 6px;
     }}
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
-      font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
-      color: var(--ink);
-      background:
-        radial-gradient(circle at top left, rgba(15,118,110,0.18), transparent 26%),
-        linear-gradient(160deg, #efe6d5 0%, #f6f2ea 45%, #f0ecdf 100%);
+      font-family: "JetBrains Mono", "IBM Plex Mono", "SF Mono", "Menlo", "Cascadia Code", monospace;
+      font-size: 13px;
+      line-height: 1.65;
+      color: var(--text-primary);
+      background: var(--bg-deep);
       min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }}
+    body::before {{
+      content: "";
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 80% 50% at 20% 10%, rgba(16,185,129,0.04), transparent),
+        radial-gradient(ellipse 60% 40% at 80% 85%, rgba(34,211,238,0.03), transparent);
+      pointer-events: none;
+      z-index: 0;
     }}
     .shell {{
-      max-width: 1180px;
+      max-width: 1120px;
       margin: 0 auto;
-      padding: 32px 20px 56px;
+      padding: 28px 22px 52px;
+      position: relative;
+      z-index: 1;
     }}
     .hero {{
-      padding: 28px 28px 22px;
-      border: 1px solid rgba(18,38,58,0.12);
-      background: linear-gradient(135deg, rgba(255,253,249,0.95), rgba(248,244,236,0.92));
-      box-shadow: var(--shadow);
-      border-radius: 24px;
-      margin-bottom: 24px;
+      padding: 24px 26px;
+      border: 1px solid var(--border);
+      background: var(--bg-surface);
+      border-radius: var(--radius);
+      margin-bottom: 20px;
+      position: relative;
+      overflow: hidden;
+    }}
+    .hero::after {{
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent-green), transparent);
+      opacity: 0.5;
     }}
     .hero h1 {{
-      margin: 0 0 10px;
-      font-size: clamp(2rem, 5vw, 3.8rem);
-      line-height: 0.95;
-      letter-spacing: -0.04em;
+      margin: 0 0 8px;
+      font-size: 1.5rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+    }}
+    .hero h1 span {{
+      color: var(--accent-green);
     }}
     .hero p {{
       margin: 0;
-      max-width: 72ch;
-      color: var(--ink-soft);
-      font-size: 1.05rem;
+      max-width: 80ch;
+      color: var(--text-secondary);
+      font-size: 0.8rem;
     }}
     .hero-badges {{
       display: flex;
-      gap: 12px;
+      gap: 10px;
       flex-wrap: wrap;
-      margin-top: 18px;
+      margin-top: 14px;
     }}
     .badge {{
-      border: 1px solid rgba(15,118,110,0.2);
-      border-radius: 999px;
-      padding: 8px 14px;
-      font-size: 0.95rem;
-      background: rgba(15,118,110,0.08);
-      color: var(--accent-strong);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 5px 10px;
+      font-size: 0.7rem;
+      background: var(--bg-elevated);
+      color: var(--text-secondary);
+      letter-spacing: 0.02em;
     }}
+    .badge.ok {{ border-color: rgba(16,185,129,0.25); color: var(--accent-green); }}
+    .badge.warn {{ border-color: rgba(244,63,94,0.25); color: var(--accent-coral); }}
     .grid {{
       display: grid;
-      gap: 20px;
-      grid-template-columns: 1.05fr 0.95fr;
+      gap: 16px;
+      grid-template-columns: 1fr 1fr;
       align-items: start;
     }}
     .stack {{
       display: grid;
-      gap: 20px;
+      gap: 16px;
     }}
     .panel {{
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 22px;
-      padding: 20px;
-      box-shadow: var(--shadow);
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
     }}
     .panel h2 {{
-      margin: 0 0 10px;
-      font-size: 1.35rem;
-      letter-spacing: -0.02em;
+      margin: 0 0 8px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }}
-    .panel p, .panel li, .meta, label {{
-      color: var(--ink-soft);
+    .panel h2::before {{
+      content: ">";
+      color: var(--accent-green);
+      font-weight: 400;
+    }}
+    .panel p, .panel li, .meta {{
+      color: var(--text-secondary);
+      font-size: 0.75rem;
+      margin: 0 0 10px;
     }}
     .panel-error {{
-      border-color: rgba(159,18,57,0.3);
-      background: rgba(159,18,57,0.06);
+      border-color: rgba(244,63,94,0.3);
+      background: rgba(244,63,94,0.06);
+    }}
+    .panel-error h2::before {{
+      color: var(--accent-coral);
     }}
     form {{
       display: grid;
-      gap: 14px;
+      gap: 12px;
     }}
     .row {{
       display: grid;
-      gap: 14px;
+      gap: 10px;
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }}
     label {{
       display: grid;
-      gap: 7px;
-      font-size: 0.92rem;
+      gap: 5px;
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
     }}
     input, textarea {{
       width: 100%;
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 12px 14px;
-      font: inherit;
-      color: var(--ink);
-      background: rgba(255,255,255,0.9);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px;
+      font-family: inherit;
+      font-size: 0.78rem;
+      color: var(--text-primary);
+      background: var(--bg-input);
+      outline: none;
+      transition: border-color 160ms ease;
+    }}
+    input:focus, textarea:focus {{
+      border-color: var(--accent-green);
+      box-shadow: 0 0 0 2px var(--glow-green);
+    }}
+    input:read-only {{
+      color: var(--text-muted);
+      cursor: default;
     }}
     textarea {{
-      min-height: 132px;
+      min-height: 100px;
       resize: vertical;
+      line-height: 1.5;
     }}
     .actions {{
       display: flex;
-      gap: 12px;
+      gap: 10px;
       flex-wrap: wrap;
       align-items: center;
     }}
     button {{
       appearance: none;
-      border: none;
-      border-radius: 999px;
-      background: var(--accent);
-      color: white;
-      padding: 12px 18px;
-      font: inherit;
-      font-weight: 600;
+      border: 1px solid var(--accent-green);
+      border-radius: var(--radius-sm);
+      background: rgba(16,185,129,0.1);
+      color: var(--accent-green);
+      padding: 8px 16px;
+      font-family: inherit;
+      font-size: 0.78rem;
+      font-weight: 500;
       cursor: pointer;
-      transition: transform 140ms ease, background 140ms ease;
+      transition: background 140ms ease, box-shadow 140ms ease;
+      letter-spacing: 0.02em;
     }}
     button:hover {{
-      background: var(--accent-strong);
-      transform: translateY(-1px);
+      background: rgba(16,185,129,0.18);
+      box-shadow: 0 0 12px var(--glow-green);
     }}
     .muted {{
-      color: var(--ink-soft);
-      font-size: 0.92rem;
+      color: var(--text-muted);
+      font-size: 0.68rem;
     }}
     .stats {{
       display: grid;
-      gap: 10px;
+      gap: 8px;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      margin-top: 14px;
+      margin-top: 10px;
     }}
     .stat {{
-      border: 1px solid rgba(18,38,58,0.08);
-      background: #faf6ef;
-      border-radius: 16px;
-      padding: 14px;
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
     }}
     .stat strong {{
       display: block;
-      font-size: 1.35rem;
-      color: var(--ink);
-      margin-bottom: 4px;
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--accent-green);
+      margin-bottom: 2px;
+    }}
+    .stat span {{
+      color: var(--text-muted);
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
     }}
     pre {{
       white-space: pre-wrap;
       word-break: break-word;
-      background: #fbf8f2;
-      border: 1px solid rgba(18,38,58,0.08);
-      border-radius: 16px;
-      padding: 14px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px;
       margin: 0;
-      font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
-      font-size: 0.9rem;
-      line-height: 1.45;
-      color: #213547;
+      font-family: inherit;
+      font-size: 0.78rem;
+      line-height: 1.55;
+      color: var(--text-secondary);
+      overflow-x: auto;
     }}
     .chunk {{
       display: grid;
-      gap: 8px;
-      padding: 14px;
-      border-radius: 16px;
-      background: #fbf8f2;
-      border: 1px solid rgba(18,38,58,0.08);
+      gap: 6px;
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
     }}
     .chunk + .chunk {{
-      margin-top: 12px;
+      margin-top: 10px;
     }}
     .chunk-header {{
       display: flex;
       flex-wrap: wrap;
-      gap: 8px 12px;
-      font-size: 0.9rem;
-      color: var(--ink-soft);
+      gap: 6px 10px;
+      font-size: 0.68rem;
+      color: var(--text-muted);
     }}
     .pill {{
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      padding: 4px 10px;
-      border-radius: 999px;
-      background: rgba(18,38,58,0.06);
-      color: var(--ink);
+      gap: 5px;
+      padding: 3px 8px;
+      border-radius: var(--radius-sm);
+      background: rgba(16,185,129,0.1);
+      color: var(--accent-green);
+      font-size: 0.65rem;
+      border: 1px solid rgba(16,185,129,0.15);
     }}
-    @media (max-width: 920px) {{
+    ul {{
+      padding-left: 16px;
+      color: var(--text-secondary);
+      font-size: 0.75rem;
+    }}
+    @media (max-width: 840px) {{
       .grid, .row, .stats {{
         grid-template-columns: 1fr;
       }}
       .shell {{
-        padding: 20px 14px 40px;
+        padding: 16px 10px 36px;
       }}
     }}
   </style>
@@ -266,12 +352,11 @@ def _render_page(
 <body>
   <main class="shell">
     <section class="hero">
-      <h1>ESG RAG Studio</h1>
-      <p>Build a searchable ESG knowledge base from PDF reports, store vectors in FAISS, inspect retrieval, and ask grounded questions through Albert from one local browser view.</p>
+      <h1>ESG_AI <span>v1.0</span></h1>
+      <p>Build a searchable ESG knowledge base from PDF reports — index → embed → retrieve → answer.</p>
       <div class="hero-badges">
-        <span class="badge">API key: {_escape(current_key_hint)}</span>
-        <span class="badge">Index directory: {_escape(index_dir)}</span>
-        <span class="badge">Sample PDF ready</span>
+        <span class="badge {('ok' if current_key_hint == 'present' else 'warn')}">API key: {_escape(current_key_hint)}</span>
+        <span class="badge">&gt; index {_escape(str(index_dir))}</span>
       </div>
     </section>
 
@@ -281,11 +366,11 @@ def _render_page(
       <div class="stack">
         <section class="panel">
           <h2>Build Index</h2>
-          <p>Paste one or more absolute PDF paths, one per line. Leave the sample path in place to rebuild the demo report index.</p>
+          <p>Paste absolute PDF paths (one per line). Leave the sample path to rebuild the demo index.</p>
           <form method="post" action="/build">
             <label>
               Albert API Key
-              <input type="password" name="api_key" placeholder="Leave blank to use current ALBERT_API_KEY">
+              <input type="password" name="api_key" placeholder="sk-... or leave blank for env var">
             </label>
             <label>
               PDF paths
@@ -302,23 +387,23 @@ def _render_page(
               </label>
             </div>
             <div class="actions">
-              <button type="submit">Build FAISS Index</button>
-              <span class="muted">If FAISS is available, the backend will switch from NumPy to FAISS automatically.</span>
+              <button type="submit">build</button>
+              <span class="muted">FAISS auto-detected; NumPy fallback available.</span>
             </div>
           </form>
         </section>
 
         <section class="panel">
           <h2>Ask Question</h2>
-          <p>Query the current index, inspect the retrieved chunks, and generate a grounded answer from the selected context.</p>
+          <p>Query the current index, inspect retrieval, and generate a grounded answer.</p>
           <form method="post" action="/ask">
             <label>
               Albert API Key
-              <input type="password" name="api_key" placeholder="Leave blank to use current ALBERT_API_KEY">
+              <input type="password" name="api_key" placeholder="sk-... or leave blank for env var">
             </label>
             <label>
               ESG question
-              <textarea name="question" style="min-height: 100px">What climate-related targets are disclosed for 2030, and are they science-based?</textarea>
+              <textarea name="question">What climate-related targets are disclosed for 2030, and are they science-based?</textarea>
             </label>
             <div class="row">
               <label>
@@ -331,7 +416,7 @@ def _render_page(
               </label>
             </div>
             <div class="actions">
-              <button type="submit">Run Retrieval + Answer</button>
+              <button type="submit">query</button>
             </div>
           </form>
         </section>
@@ -354,7 +439,7 @@ def _render_index_summary(summary: dict[str, Any] | None, index_dir: Path) -> st
         return f"""
 <section class="panel">
   <h2>Index Status</h2>
-  <p>No built index found yet in <strong>{_escape(index_dir)}</strong>. Build one from the left panel to start querying.</p>
+  <p>No index built yet in <strong>{_escape(str(index_dir))}</strong>. Run <span style="color:var(--accent-green)">build</span> from the left panel to start querying.</p>
 </section>
 """
 
@@ -368,7 +453,7 @@ def _render_index_summary(summary: dict[str, Any] | None, index_dir: Path) -> st
     <div class="stat"><strong>{_escape(summary.get("embedding_model", "not built"))}</strong><span>Embedding model</span></div>
     <div class="stat"><strong>{_escape(summary.get("embedding_dimension", "n/a"))}</strong><span>Dimensions</span></div>
   </div>
-  <p class="meta">Built at: {_escape(summary.get("built_at", "unknown"))}</p>
+  <p class="meta">Built: {_escape(summary.get("built_at", "unknown"))}</p>
   <ul>{pdf_list}</ul>
 </section>
 """

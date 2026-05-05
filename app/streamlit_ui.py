@@ -185,8 +185,119 @@ def _build_document_prompt(
     )
 
 
+def _inject_terminal_css() -> None:
+    st.markdown("""<style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
+
+    * { font-family: "JetBrains Mono", "IBM Plex Mono", "SF Mono", "Menlo", monospace !important; }
+
+    .stApp { background: #07080e; }
+
+    .main .block-container {
+        padding-top: 1.5rem;
+        max-width: 1100px;
+    }
+
+    section[data-testid="stSidebar"] {
+        background: #0a0c15;
+        border-right: 1px solid #1a1c2e;
+    }
+    section[data-testid="stSidebar"] .block-container {
+        padding-top: 1rem;
+    }
+
+    h1, h2, h3, h4 { color: #e1e4f0 !important; letter-spacing: -0.01em; }
+    h1 { font-size: 1.5rem !important; font-weight: 600 !important; }
+    h2 { font-size: 0.95rem !important; font-weight: 500 !important; }
+    h3 { font-size: 0.82rem !important; font-weight: 500 !important; text-transform: uppercase; letter-spacing: 0.06em; color: #8b8fa8 !important; }
+
+    .stTextInput > div > div > input,
+    .stTextArea > div > div > textarea,
+    .stSelectbox > div > div > div,
+    .stNumberInput > div > div > input {
+        background: #0a0b14 !important;
+        border: 1px solid #1a1c2e !important;
+        border-radius: 6px !important;
+        color: #e1e4f0 !important;
+        font-size: 0.78rem !important;
+    }
+    .stTextInput > div > div > input:focus,
+    .stTextArea > div > div > textarea:focus {
+        border-color: #10b981 !important;
+        box-shadow: 0 0 0 2px rgba(16,185,129,0.18) !important;
+    }
+
+    .stButton > button {
+        background: rgba(16,185,129,0.1) !important;
+        border: 1px solid #10b981 !important;
+        border-radius: 6px !important;
+        color: #10b981 !important;
+        font-size: 0.78rem !important;
+        font-weight: 500 !important;
+        letter-spacing: 0.02em;
+        transition: background 140ms ease, box-shadow 140ms ease;
+    }
+    .stButton > button:hover {
+        background: rgba(16,185,129,0.18) !important;
+        box-shadow: 0 0 12px rgba(16,185,129,0.18) !important;
+        border-color: #10b981 !important;
+        color: #10b981 !important;
+    }
+
+    .stFormSubmitButton > button { border-width: 1px !important; }
+
+    .stDownloadButton > button {
+        background: rgba(34,211,238,0.1) !important;
+        border: 1px solid #22d3ee !important;
+        color: #22d3ee !important;
+        border-radius: 6px !important;
+    }
+
+    .stSlider > div > div > div > div { background: #10b981 !important; }
+
+    .stCheckbox > label > div[data-baseweb="checkbox"] > div { border-color: #1a1c2e !important; }
+    .stCheckbox > label > div[data-baseweb="checkbox"][data-checked="true"] > div { background: #10b981 !important; border-color: #10b981 !important; }
+
+    div[data-testid="stExpander"] { border: 1px solid #1a1c2e !important; border-radius: 10px !important; }
+    div[data-testid="stExpander"] > div { background: #0d0f1a !important; }
+    
+    .stAlert { border-radius: 6px !important; }
+    div[data-baseweb="select"] > div { background: #0a0b14 !important; border-color: #1a1c2e !important; }
+    
+    div[data-testid="stCaptionContainer"] { color: #5c607a !important; font-size: 0.7rem; }
+
+    .stFileUploader > section > div { border: 1px dashed #1a1c2e !important; border-radius: 6px !important; background: #0a0b14 !important; }
+    .stFileUploader > section > div:hover { border-color: #10b981 !important; }
+
+    hr { border-color: #1a1c2e !important; }
+
+    label, .stMarkdown p, .stMarkdown li { color: #8b8fa8 !important; font-size: 0.75rem; }
+    label > div:first-child { color: #5c607a !important; text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.7rem !important; }
+
+    .stSpinner > div { border-color: #10b981 !important; }
+
+    pre, code {
+        background: #0a0b14 !important;
+        border: 1px solid #1a1c2e !important;
+        border-radius: 6px;
+        font-size: 0.78rem !important;
+        color: #8b8fa8 !important;
+    }
+
+    div[data-testid="stVerticalBlock"] > div[style*="flex-direction: column"] > div[data-testid="stVerticalBlock"] {
+        gap: 0.5rem !important;
+    }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #07080e; }
+    ::-webkit-scrollbar-thumb { background: #1e2035; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #2a2d45; }
+    </style>""", unsafe_allow_html=True)
+
+
 def main() -> None:
-    st.set_page_config(page_title="ESG AI Prompt Console", layout="wide")
+    st.set_page_config(page_title="ESG AI Terminal", layout="wide")
+    _inject_terminal_css()
 
     st.session_state.setdefault("last_output", "")
     st.session_state.setdefault("uploaded_document", None)
@@ -196,17 +307,18 @@ def main() -> None:
     if flash_status:
         st.success(flash_status)
 
-    st.title("Prompt Console")
-    st.caption("Albert models only. Upload a document to answer from it.")
+    st.markdown('<h1 style="margin:0;padding:0;">ESG_AI <span style="color:#10b981;">v1.0</span></h1>', unsafe_allow_html=True)
+    st.caption("> Ask questions against ESG reports using Albert models. Upload a document or use local sample_data.")
 
     with st.sidebar:
-        st.header("Settings")
+        st.markdown("### > settings")
         api_key = st.text_input(
-            "Albert API key",
+            "API Key",
             value=os.environ.get("ALBERT_API_KEY", ""),
             type="password",
+            placeholder="sk-...",
         )
-        albert_base_url = st.text_input("Albert base URL", value=DEFAULT_ALBERT_BASE_URL)
+        albert_base_url = st.text_input("Base URL", value=DEFAULT_ALBERT_BASE_URL)
 
         models, warnings = load_model_catalog(api_key, base_url=albert_base_url)
         for warning in warnings:
@@ -214,15 +326,15 @@ def main() -> None:
 
         if models:
             selected_model = st.selectbox(
-                "AI model",
+                "Model",
                 options=models,
                 format_func=lambda model: model.label,
             )
         else:
             selected_model = None
-            st.error("No Albert text-generation models were found.")
+            st.error("No Albert text-generation models found.")
 
-        st.subheader("Tuning")
+        st.markdown("### > tuning")
         temperature = st.slider("Temperature", min_value=0.0, max_value=2.0, value=0.7, step=0.05)
         top_k = st.slider("Top K", min_value=1, max_value=100, value=40, step=1)
         chunk_size = st.slider("Chunk size (words)", min_value=100, max_value=2000, value=400, step=50)
@@ -236,23 +348,23 @@ def main() -> None:
         system_prompt = st.text_area(
             "System prompt",
             value=DEFAULT_SYSTEM_PROMPT,
-            height=120,
+            height=100,
         )
 
-        st.divider()
-        st.subheader("Document")
+        st.markdown("---")
+        st.markdown("### > document")
         company_hint = st.text_input(
-            "Company name (optional)",
+            "Company (optional)",
             placeholder="e.g. BNP Paribas",
             help="Used to match a report in sample_data when you do not upload a file.",
         )
         use_local_reports = st.checkbox(
-            "Auto-select a report from sample_data",
+            "Auto-select from sample_data",
             value=True,
-            help="When no document is uploaded, the app looks for a PDF whose filename matches the company name in your prompt.",
+            help="When no document is uploaded, the app matches a local PDF by company name.",
         )
         uploaded_file = st.file_uploader(
-            "Upload a document",
+            "Upload document",
             type=["pdf", "txt", "md", "html", "htm"],
         )
 
@@ -274,14 +386,13 @@ def main() -> None:
 
         document = st.session_state.get("uploaded_document")
         if document:
-            st.caption(f"Loaded: {document['name']}")
-            st.caption(f"{document['char_count']} characters extracted")
+            st.caption(f"Loaded: {document['name']} ({document['char_count']} chars)")
 
         if document is None:
             st.session_state["document_context_enabled"] = False
 
         st.checkbox(
-            "Use uploaded document in prompt",
+            "Use document in prompt",
             key="document_context_enabled",
             disabled=document is None,
         )
@@ -294,21 +405,21 @@ def main() -> None:
 
     if st.session_state.get("uploaded_document"):
         document = st.session_state["uploaded_document"]
-        st.info(f"Attached document: {document['name']} ({document['char_count']} characters)")
+        st.info(f"Document attached: {document['name']} ({document['char_count']} characters)")
 
     with st.form("prompt_form", clear_on_submit=False):
         prompt = st.text_area(
             "Prompt",
-            height=220,
-            placeholder="Ask a question, draft a note, or request an analysis.",
+            height=180,
+            placeholder="> Ask a question, draft analysis, or request a summary...",
         )
-        submitted = st.form_submit_button("Run")
+        submitted = st.form_submit_button("Execute")
 
     if submitted:
         if not selected_model:
             st.error("Select an Albert model first.")
         elif not prompt.strip():
-            st.warning("Type a prompt before running the model.")
+            st.warning("Type a prompt before running.")
         else:
             final_prompt = prompt.strip()
             selected_document = None
@@ -322,9 +433,9 @@ def main() -> None:
                 if selected_path:
                     selected_document = _read_document_path(selected_path)
                     selected_document["match_score"] = match_score
-                    selected_document_note = f"Matched local report: {selected_path.name} (score {match_score:.1f})"
+                    selected_document_note = f"Matched report: {selected_path.name} (score {match_score:.1f})"
                 elif local_reports:
-                    selected_document_note = "No local report matched the company name in the prompt."
+                    selected_document_note = "No local report matched the company name."
 
             if selected_document:
                 final_prompt = _build_document_prompt(
@@ -355,20 +466,19 @@ def main() -> None:
                     st.session_state["last_output"] = response_text
                     st.session_state["last_prompt_with_context"] = final_prompt
                     st.session_state["last_model"] = selected_model.label
-                    st.success(f"Completed using {selected_model.label}.")
+                    st.success(f"Completed ({selected_model.label}).")
                     if selected_document_note:
                         st.caption(selected_document_note)
 
-    st.subheader("Output")
+    st.markdown("### > output")
     output_text = st.session_state.get("last_output", "")
-    with st.container(border=True):
-        if output_text:
-            st.markdown(output_text)
-        else:
-            st.caption("Run a prompt to see the rendered markdown output here.")
+    if output_text:
+        st.markdown(output_text)
+    else:
+        st.caption("Execute a prompt to see output here.")
 
     if st.session_state.get("last_prompt_with_context"):
-        with st.expander("Prompt sent to the model", expanded=False):
+        with st.expander("Full prompt sent to model"):
             st.markdown(st.session_state.get("last_prompt_with_context", ""))
 
 
