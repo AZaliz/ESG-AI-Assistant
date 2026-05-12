@@ -1,0 +1,6 @@
+requests>=2.31
+beautifulsoup4>=4.12
+# brotli decoding — required for sending Accept-Encoding: br in browser-mimic headers.
+# Without it, sites like BNP Paribas and Schneider Electric return 403 because
+# the WAF treats "no br support" as a bot signal.
+brotli>=1.1.0
