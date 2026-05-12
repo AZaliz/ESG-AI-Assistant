@@ -1,4 +1,7 @@
 beautifulsoup4>=4.12
+# brotli decoding — required for sending Accept-Encoding: br in browser-mimic headers.
+# Without it, some sites return 403 because the WAF treats "no br support" as a bot signal.
+brotli>=1.1.0
 faiss-cpu>=1.13
 lxml>=5.2
 numpy>=1.26
