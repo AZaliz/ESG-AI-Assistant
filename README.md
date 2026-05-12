@@ -161,6 +161,17 @@ python3 -m app.cli rag-build \
   --pdf /absolute/path/to/another-report.pdf
 ```
 
+Customize chunking parameters:
+
+```bash
+python3 -m app.cli rag-build \
+  --chunk-target-tokens 420 \
+  --chunk-min-tokens 300 \
+  --chunk-max-tokens 500 \
+  --chunk-overlap-tokens 50 \
+  --section-aware
+```
+
 Preview extraction and chunking without calling the API:
 
 ```bash
@@ -173,6 +184,12 @@ Retrieves relevant chunks from the local index and answers a question.
 
 ```bash
 python3 -m app.cli rag-ask "What climate targets are disclosed for 2030?"
+```
+
+Use a specific retrieval mode:
+
+```bash
+python3 -m app.cli rag-ask "What climate targets are disclosed for 2030?" --retrieval-mode hybrid --top-k 8 --candidate-k 20
 ```
 
 Retrieve chunks only:
@@ -213,8 +230,35 @@ Evaluates retrieval quality against the sample ESG question dataset.
 
 ```bash
 python3 -m app.cli rag-eval
-python3 -m app.cli rag-eval --company TotalEnergies
+python3 -m app.cli rag-eval --company TotalEnergies --retrieval-mode hybrid --top-k 8
 ```
+
+### `rag-eval-grid`
+
+Grid-search optimization that tests many chunking and retrieval parameter combinations and ranks them by hit rate, partial+hit rate, and best match score.
+
+```bash
+python3 -m app.cli rag-eval-grid --company TotalEnergies
+```
+
+Customize the search space:
+
+```bash
+python3 -m app.cli rag-eval-grid \
+  --company TotalEnergies \
+  --chunk-targets 250 350 420 550 700 \
+  --chunk-mins 100 200 300 \
+  --chunk-maxs 350 500 700 900 \
+  --chunk-overlaps 0 50 100 150 \
+  --top-ks 3 5 8 10 \
+  --retrieval-modes dense hybrid \
+  --section-aware
+```
+
+Output files produced:
+- `outputs/rag_eval_grid_results.json` — full grid search results with per-question diagnostics
+- `outputs/rag_eval_grid_results.csv` — tabular summary of all configurations
+- `outputs/best_rag_config.json` — the single best configuration across all metrics
 
 ## Environment Variables
 

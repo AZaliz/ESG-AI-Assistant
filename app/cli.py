@@ -12,9 +12,10 @@ from app.models import CompanySeed
 from app.ingest_target_reports import run_ingest_target_reports
 from app.pipeline import AcquisitionPipeline
 from app.rag import DEFAULT_BASE_URL, DEFAULT_INDEX_DIR, run_rag_ask, run_rag_build
-from app.rag_eval import DEFAULT_EVAL_DATASET, DEFAULT_EVAL_OUTPUT, run_rag_eval
+from app.rag_eval import DEFAULT_EVAL_DATASET, DEFAULT_EVAL_OUTPUT, run_rag_eval, run_rag_eval_grid
+from app.rag_tune import DEFAULT_TUNE_OUTPUT, run_rag_tune
 from app.smoke_test import run_smoke_test
-from app.utils import ensure_directories
+from app.utils import OUTPUT_DIR, ensure_directories
 from app.web import run_web_app
 
 
@@ -53,19 +54,19 @@ def build_parser() -> argparse.ArgumentParser:
     rag_build.add_argument(
         "--chunk-target-tokens",
         type=int,
-        default=420,
+        default=380,
         help="Preferred chunk size in approximate tokens.",
     )
     rag_build.add_argument(
         "--chunk-min-tokens",
         type=int,
-        default=300,
+        default=274,
         help="Minimum chunk size in approximate tokens.",
     )
     rag_build.add_argument(
         "--chunk-max-tokens",
         type=int,
-        default=500,
+        default=464,
         help="Maximum chunk size in approximate tokens.",
     )
     rag_build.add_argument(
@@ -73,6 +74,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=16,
         help="How many chunks to send per embeddings request.",
+    )
+    rag_build.add_argument(
+        "--chunk-overlap-tokens",
+        type=int,
+        default=30,
+        help="How many approximate tokens to overlap between consecutive chunks.",
+    )
+    rag_build.add_argument(
+        "--section-aware",
+        action="store_true",
+        help="Enable section/header-aware chunking to align chunks with document structure.",
     )
     rag_build.add_argument(
         "--embedding-model",
@@ -112,8 +124,38 @@ def build_parser() -> argparse.ArgumentParser:
         help="Albert embedding model id for the question embedding.",
     )
     rag_ask.add_argument(
+        "--retrieval-mode",
+        default="dense",
+        choices=["dense", "lexical", "hybrid"],
+        help="Retrieval mode: dense (semantic embeddings), lexical (BM25-style), or hybrid (RRF fusion).",
+    )
+    rag_ask.add_argument(
+        "--retrieval-architecture",
+        default=argparse.SUPPRESS,
+        choices=["semantic", "hybrid", "semantic_rerank", "dense", "lexical"],
+        help=argparse.SUPPRESS,
+    )
+    rag_ask.add_argument(
+        "--candidate-k",
+        type=int,
+        default=12,
+        help="How many candidate chunks to consider before the final top-k selection.",
+    )
+    rag_ask.add_argument(
+        "--search-breadth",
+        type=int,
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    rag_ask.add_argument(
         "--text-model",
         help="Albert text-generation model id for answer generation.",
+    )
+    rag_ask.add_argument(
+        "--temperature",
+        type=float,
+        default=0.5,
+        help="Temperature for the answer-generation model.",
     )
     rag_ask.add_argument(
         "--base-url",
@@ -169,12 +211,227 @@ def build_parser() -> argparse.ArgumentParser:
         help="How many chunks to retrieve for each evaluation question.",
     )
     rag_eval.add_argument(
+        "--embedding-model",
+        help="Albert embedding model id for the question embedding.",
+    )
+    rag_eval.add_argument(
+        "--retrieval-mode",
+        default="dense",
+        choices=["dense", "lexical", "hybrid"],
+        help="Retrieval mode: dense (semantic embeddings), lexical (BM25-style), or hybrid (RRF fusion).",
+    )
+    rag_eval.add_argument(
+        "--retrieval-architecture",
+        default=argparse.SUPPRESS,
+        choices=["semantic", "hybrid", "semantic_rerank", "dense", "lexical"],
+        help=argparse.SUPPRESS,
+    )
+    rag_eval.add_argument(
+        "--candidate-k",
+        type=int,
+        default=12,
+        help="How many candidate chunks to consider before the final top-k selection.",
+    )
+    rag_eval.add_argument(
+        "--search-breadth",
+        type=int,
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    rag_eval.add_argument(
         "--output",
         type=Path,
         default=DEFAULT_EVAL_OUTPUT,
         help="Where to save the evaluation JSON output.",
     )
     rag_eval.add_argument(
+        "--base-url",
+        default=DEFAULT_BASE_URL,
+        help="Albert API base URL.",
+    )
+
+    rag_tune = subparsers.add_parser("rag-tune", help="Iteratively tune the local ESG RAG pipeline")
+    rag_tune.add_argument(
+        "--dataset",
+        type=Path,
+        default=DEFAULT_EVAL_DATASET,
+        help="CSV dataset containing ESG evaluation questions and expected contexts.",
+    )
+    rag_tune.add_argument(
+        "--sample-dir",
+        type=Path,
+        default=Path(__file__).resolve().parent.parent / "sample_data",
+        help="Directory containing the sample PDF reports used for tuning.",
+    )
+    rag_tune.add_argument(
+        "--company",
+        help="Limit tuning to a single company from the dataset.",
+    )
+    rag_tune.add_argument(
+        "--top-k",
+        type=int,
+        default=5,
+        help="How many chunks to pass into the answer step.",
+    )
+    rag_tune.add_argument(
+        "--chunk-targets",
+        type=int,
+        nargs="+",
+        help="Chunk target token sizes to evaluate during the coarse pass.",
+    )
+    rag_tune.add_argument(
+        "--chunk-overlaps",
+        type=int,
+        nargs="+",
+        help="Chunk overlap sizes to evaluate during the coarse pass.",
+    )
+    rag_tune.add_argument(
+        "--retrieval-modes",
+        nargs="+",
+        choices=["dense", "lexical", "hybrid", "semantic", "semantic_rerank"],
+        help="Retrieval modes to compare after the chunking pass.",
+    )
+    rag_tune.add_argument(
+        "--retrieval-architectures",
+        nargs="+",
+        choices=["semantic", "hybrid", "semantic_rerank", "dense", "lexical"],
+        help=argparse.SUPPRESS,
+    )
+    rag_tune.add_argument(
+        "--search-breadths",
+        type=int,
+        nargs="+",
+        help="Candidate retrieval breadth values to compare after the chunking pass.",
+    )
+    rag_tune.add_argument(
+        "--temperatures",
+        type=float,
+        nargs="+",
+        help="Generation temperatures to compare once retrieval is fixed.",
+    )
+    rag_tune.add_argument(
+        "--embedding-model",
+        help="Albert embedding model id to use throughout tuning.",
+    )
+    rag_tune.add_argument(
+        "--text-model",
+        help="Albert text-generation model id to use throughout tuning.",
+    )
+    rag_tune.add_argument(
+        "--batch-size",
+        type=int,
+        default=16,
+        help="How many chunks to send per embeddings request while building indexes.",
+    )
+    rag_tune.add_argument(
+        "--index-root",
+        type=Path,
+        default=DEFAULT_INDEX_DIR.parent / "rag_tune_indexes",
+        help="Directory where temporary tuning indexes should be written.",
+    )
+    rag_tune.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_TUNE_OUTPUT,
+        help="Where to save the tuning JSON output.",
+    )
+    rag_tune.add_argument(
+        "--base-url",
+        default=DEFAULT_BASE_URL,
+        help="Albert API base URL.",
+    )
+
+    rag_eval_grid = subparsers.add_parser(
+        "rag-eval-grid",
+        help="Grid-search RAG chunking and retrieval parameters against the evaluation dataset.",
+    )
+    rag_eval_grid.add_argument(
+        "--dataset",
+        type=Path,
+        default=DEFAULT_EVAL_DATASET,
+        help="CSV dataset containing ESG evaluation questions and expected contexts.",
+    )
+    rag_eval_grid.add_argument(
+        "--company",
+        required=True,
+        help="Company to evaluate (required).",
+    )
+    rag_eval_grid.add_argument(
+        "--sample-dir",
+        type=Path,
+        default=Path(__file__).resolve().parent.parent / "sample_data",
+        help="Directory containing the sample PDF reports.",
+    )
+    rag_eval_grid.add_argument(
+        "--chunk-targets",
+        type=int,
+        nargs="+",
+        default=[250, 350, 420, 550, 700],
+        help="Chunk target token sizes to evaluate.",
+    )
+    rag_eval_grid.add_argument(
+        "--chunk-mins",
+        type=int,
+        nargs="+",
+        default=[100, 200, 300],
+        help="Chunk minimum token sizes to evaluate.",
+    )
+    rag_eval_grid.add_argument(
+        "--chunk-maxs",
+        type=int,
+        nargs="+",
+        default=[350, 500, 700, 900],
+        help="Chunk maximum token sizes to evaluate.",
+    )
+    rag_eval_grid.add_argument(
+        "--chunk-overlaps",
+        type=int,
+        nargs="+",
+        default=[0, 50, 100, 150],
+        help="Chunk overlap token values to evaluate.",
+    )
+    rag_eval_grid.add_argument(
+        "--top-ks",
+        type=int,
+        nargs="+",
+        default=[3, 5, 8, 10],
+        help="Top-k retrieval values to evaluate.",
+    )
+    rag_eval_grid.add_argument(
+        "--retrieval-modes",
+        nargs="+",
+        default=["dense", "hybrid"],
+        choices=["dense", "lexical", "hybrid"],
+        help="Retrieval modes to evaluate.",
+    )
+    rag_eval_grid.add_argument(
+        "--candidate-k",
+        type=int,
+        default=20,
+        help="How many candidate chunks to consider before the final top-k selection.",
+    )
+    rag_eval_grid.add_argument(
+        "--section-aware",
+        action="store_true",
+        help="Enable section/header-aware chunking for all indexes.",
+    )
+    rag_eval_grid.add_argument(
+        "--batch-size",
+        type=int,
+        default=16,
+        help="How many chunks to send per embeddings request while building indexes.",
+    )
+    rag_eval_grid.add_argument(
+        "--embedding-model",
+        help="Albert embedding model id to use throughout the grid search.",
+    )
+    rag_eval_grid.add_argument(
+        "--index-root",
+        type=Path,
+        default=OUTPUT_DIR / "rag_grid_indexes",
+        help="Directory where temporary grid indexes should be written.",
+    )
+    rag_eval_grid.add_argument(
         "--base-url",
         default=DEFAULT_BASE_URL,
         help="Albert API base URL.",
@@ -202,6 +459,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Port for the Streamlit app.",
     )
     return parser
+
+
+def _resolve_retrieval_mode(args: argparse.Namespace) -> str:
+    mode = getattr(args, "retrieval_mode", None)
+    legacy = getattr(args, "retrieval_architecture", None)
+    if legacy and legacy != argparse.SUPPRESS:
+        return legacy
+    if mode:
+        return mode
+    return "dense"
+
+
+def _resolve_candidate_k(args: argparse.Namespace) -> int | None:
+    ck = getattr(args, "candidate_k", None)
+    sb = getattr(args, "search_breadth", None)
+    if sb is not None:
+        return sb
+    if ck is not None:
+        return ck
+    return 12
 
 
 def configure_logging(level: str) -> None:
@@ -250,6 +527,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "rag-eval":
         return run_rag_eval(args)
+
+    if args.command == "rag-eval-grid":
+        return run_rag_eval_grid(args)
+
+    if args.command == "rag-tune":
+        return run_rag_tune(args)
 
     if args.command == "ingest-target-reports":
         return run_ingest_target_reports(args)

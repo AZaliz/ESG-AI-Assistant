@@ -386,6 +386,16 @@ def _render_page(
                 <input type="number" name="batch_size" value="16" min="1" max="128">
               </label>
             </div>
+            <div class="row">
+              <label>
+                Chunk overlap tokens
+                <input type="number" name="chunk_overlap_tokens" value="50" min="0" max="300">
+              </label>
+              <label>
+                Section-aware
+                <input type="checkbox" name="section_aware" value="1">
+              </label>
+            </div>
             <div class="actions">
               <button type="submit">build</button>
               <span class="muted">FAISS auto-detected; NumPy fallback available.</span>
@@ -526,6 +536,8 @@ def _build_handler(form: dict[str, str], index_dir: Path) -> dict[str, Any]:
         target_tokens=int(form.get("chunk_target_tokens", "420") or 420),
         min_tokens=300,
         max_tokens=500,
+        overlap_tokens=int(form.get("chunk_overlap_tokens", "50") or 0),
+        section_aware=form.get("section_aware") == "1",
         batch_size=int(form.get("batch_size", "16") or 16),
         base_url=DEFAULT_BASE_URL,
     )

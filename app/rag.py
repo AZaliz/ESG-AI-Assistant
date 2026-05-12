@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
+import time
+from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,6 +24,22 @@ DEFAULT_INDEX_DIR = OUTPUT_DIR / "rag_index"
 DEFAULT_SAMPLE_DIR = Path(__file__).resolve().parent.parent / "sample_data"
 DEFAULT_SAMPLE_PDF = DEFAULT_SAMPLE_DIR / "totalenergies_sustainability-climate-2024-progress-report_2024_en_pdf.pdf"
 TOKEN_PATTERN = re.compile(r"\S+")
+SEARCH_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
+VALID_RETRIEVAL_ARCHITECTURES = ("semantic", "hybrid", "semantic_rerank", "dense", "lexical")
+
+
+def _normalize_retrieval_mode(mode: str) -> str:
+    mode = mode.strip().lower()
+    if mode in ("dense", "semantic"):
+        return "semantic"
+    if mode == "lexical":
+        return "lexical"
+    if mode == "hybrid":
+        return "hybrid"
+    if mode == "semantic_rerank":
+        return "semantic_rerank"
+    supported = ", ".join(VALID_RETRIEVAL_ARCHITECTURES)
+    raise RuntimeError(f"Unknown retrieval architecture '{mode}'. Choose from: {supported}.")
 
 try:  # pragma: no cover - availability depends on the local environment.
     import faiss  # type: ignore[import-not-found]
@@ -56,9 +75,24 @@ class AlbertClient:
         return f"{self.base_url.rstrip('/')}/{path.lstrip('/')}"
 
     def _request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
-        response = self.session.request(method, self._url(path), timeout=self.timeout, **kwargs)
-        response.raise_for_status()
-        return response
+        retryable_statuses = {429, 500, 502, 503, 504}
+        delay_seconds = 2.0
+
+        for attempt in range(1, 7):
+            response = self.session.request(method, self._url(path), timeout=self.timeout, **kwargs)
+            if response.status_code not in retryable_statuses or attempt == 6:
+                response.raise_for_status()
+                return response
+
+            retry_after = response.headers.get("Retry-After", "").strip()
+            try:
+                wait_seconds = float(retry_after) if retry_after else delay_seconds
+            except ValueError:
+                wait_seconds = delay_seconds
+            time.sleep(min(max(wait_seconds, 1.0), 30.0))
+            delay_seconds = min(delay_seconds * 2.0, 30.0)
+
+        raise RuntimeError("Albert request retry loop exited unexpectedly.")
 
     def list_models(self) -> list[dict[str, Any]]:
         return self._request("GET", "/models").json().get("data", [])
@@ -104,11 +138,20 @@ class AlbertClient:
             raise RuntimeError("Albert returned an unexpected embeddings payload.")
         return embeddings
 
-    def chat_completion(self, model: str, messages: list[dict[str, str]]) -> str:
+    def chat_completion(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float | None = None,
+    ) -> str:
+        payload: dict[str, Any] = {"model": model, "messages": messages, "stream": False}
+        if temperature is not None:
+            payload["temperature"] = temperature
         response = self._request(
             "POST",
             "/chat/completions",
-            json={"model": model, "messages": messages, "stream": False},
+            json=payload,
         ).json()
         choices = response.get("choices") or []
         if not choices:
@@ -163,6 +206,17 @@ def extract_pdf_pages(pdf_path: Path) -> list[PageText]:
             if text:
                 pages.append(PageText(page_number=index, text=text))
     return pages
+
+
+def _starts_with_header(text: str) -> bool:
+    first_line = text.split("\n", 1)[0].strip()
+    if not first_line or len(first_line) > 120:
+        return False
+    if re.match(r"^[\dIVXivx]+[\.\)]\s", first_line):
+        return True
+    if first_line.isupper() and len(first_line.split()) <= 8:
+        return True
+    return False
 
 
 def _build_units(pages: list[PageText], max_tokens: int) -> list[tuple[int, str, int]]:
@@ -271,6 +325,7 @@ def chunk_pages(
     min_tokens: int = 300,
     max_tokens: int = 500,
     overlap_tokens: int = 0,
+    section_aware: bool = False,
 ) -> list[ChunkRecord]:
     units = _build_units(pages, max_tokens=max_tokens)
     if not units:
@@ -287,13 +342,20 @@ def chunk_pages(
             current_tokens = token_count
             continue
 
-        should_append = current_tokens + token_count <= max_tokens and (
-            current_tokens < target_tokens or current_tokens < min_tokens
+        force_break = (
+            section_aware
+            and current_tokens >= min_tokens
+            and _starts_with_header(text)
         )
-        if should_append:
-            current_units.append((page_number, text, token_count))
-            current_tokens += token_count
-            continue
+
+        if not force_break:
+            should_append = current_tokens + token_count <= max_tokens and (
+                current_tokens < target_tokens or current_tokens < min_tokens
+            )
+            if should_append:
+                current_units.append((page_number, text, token_count))
+                current_tokens += token_count
+                continue
 
         chunks.append(
             _finalize_chunk(
@@ -331,6 +393,7 @@ def chunk_text(
     min_tokens: int = 300,
     max_tokens: int = 500,
     overlap_tokens: int = 0,
+    section_aware: bool = False,
 ) -> list[ChunkRecord]:
     pages = [PageText(page_number=1, text=text)]
     return chunk_pages(
@@ -341,6 +404,7 @@ def chunk_text(
         min_tokens=min_tokens,
         max_tokens=max_tokens,
         overlap_tokens=overlap_tokens,
+        section_aware=section_aware,
     )
 
 
@@ -375,6 +439,7 @@ def build_chunk_records(
     min_tokens: int,
     max_tokens: int,
     overlap_tokens: int = 0,
+    section_aware: bool = False,
 ) -> list[ChunkRecord]:
     chunk_records: list[ChunkRecord] = []
     for pdf_path in pdf_paths:
@@ -388,6 +453,7 @@ def build_chunk_records(
                 min_tokens=min_tokens,
                 max_tokens=max_tokens,
                 overlap_tokens=overlap_tokens,
+                section_aware=section_aware,
             )
         )
 
@@ -427,6 +493,134 @@ def search_vectors(query_vector: np.ndarray, vectors: np.ndarray, top_k: int) ->
     return [(int(index), float(scores[index])) for index in top_indices]
 
 
+def _tokenize_for_search(text: str) -> list[str]:
+    return SEARCH_TOKEN_PATTERN.findall(text.lower())
+
+
+def _normalize_match_scores(matches: list[tuple[int, float]]) -> dict[int, float]:
+    if not matches:
+        return {}
+
+    scores = [score for _, score in matches]
+    max_score = max(scores)
+    min_score = min(scores)
+    if math.isclose(max_score, min_score):
+        return {index: 1.0 for index, _ in matches}
+    span = max_score - min_score
+    return {index: (score - min_score) / span for index, score in matches}
+
+
+def _score_lexical_matches(
+    question: str,
+    chunks: list[ChunkRecord],
+    *,
+    candidate_indices: list[int] | None = None,
+) -> dict[int, float]:
+    query_terms = Counter(_tokenize_for_search(question))
+    if not query_terms:
+        return {}
+
+    selected_indices = candidate_indices or list(range(len(chunks)))
+    doc_term_counts: dict[int, Counter[str]] = {}
+    document_frequency: Counter[str] = Counter()
+    document_lengths: dict[int, int] = {}
+
+    for index in selected_indices:
+        terms = Counter(_tokenize_for_search(chunks[index].text))
+        if not terms:
+            continue
+        doc_term_counts[index] = terms
+        document_lengths[index] = sum(terms.values())
+        for term in terms:
+            document_frequency[term] += 1
+
+    if not doc_term_counts:
+        return {}
+
+    avg_length = sum(document_lengths.values()) / len(document_lengths)
+    k1 = 1.2
+    b = 0.75
+    scores: dict[int, float] = {}
+
+    for index, term_counts in doc_term_counts.items():
+        doc_length = document_lengths[index]
+        score = 0.0
+        for term, query_count in query_terms.items():
+            term_frequency = term_counts.get(term, 0)
+            if term_frequency <= 0:
+                continue
+            doc_frequency = document_frequency[term]
+            idf = math.log(1.0 + ((len(doc_term_counts) - doc_frequency + 0.5) / (doc_frequency + 0.5)))
+            length_penalty = 1.0 - b + b * (doc_length / max(avg_length, 1.0))
+            numerator = term_frequency * (k1 + 1.0)
+            denominator = term_frequency + (k1 * length_penalty)
+            score += idf * (numerator / max(denominator, 1e-6)) * (0.5 + 0.5 * min(query_count, 3))
+        if score > 0:
+            scores[index] = score
+    return scores
+
+
+def _rank_score_map(scores: dict[int, float], limit: int) -> list[tuple[int, float]]:
+    return sorted(scores.items(), key=lambda item: item[1], reverse=True)[:limit]
+
+
+def select_chunk_matches(
+    *,
+    question: str,
+    chunks: list[ChunkRecord],
+    semantic_matches: list[tuple[int, float]],
+    top_k: int,
+    retrieval_architecture: str = "semantic",
+    search_breadth: int | None = None,
+) -> list[tuple[int, float]]:
+    architecture = _normalize_retrieval_mode(retrieval_architecture)
+
+    breadth = max(top_k, search_breadth or top_k)
+    semantic_matches = semantic_matches[:breadth]
+    if architecture == "semantic":
+        return semantic_matches[:top_k]
+
+    if architecture == "lexical":
+        lexical_matches = _rank_score_map(_score_lexical_matches(question, chunks), breadth)
+        return lexical_matches[:top_k]
+
+    if architecture == "semantic_rerank":
+        candidate_indices = [index for index, _ in semantic_matches]
+        lexical_matches = _rank_score_map(
+            _score_lexical_matches(question, chunks, candidate_indices=candidate_indices),
+            breadth,
+        )
+        lexical_norm = _normalize_match_scores(lexical_matches)
+        semantic_norm = _normalize_match_scores(semantic_matches)
+        reranked = [
+            (
+                index,
+                (0.7 * semantic_norm.get(index, 0.0)) + (0.3 * lexical_norm.get(index, 0.0)),
+            )
+            for index in candidate_indices
+        ]
+        return sorted(reranked, key=lambda item: item[1], reverse=True)[:top_k]
+
+    lexical_matches = _rank_score_map(_score_lexical_matches(question, chunks), breadth)
+    fused_scores: Counter[int] = Counter()
+    for ranking in (semantic_matches, lexical_matches):
+        for rank, (index, _score) in enumerate(ranking, start=1):
+            fused_scores[index] += 1.0 / (60.0 + rank)
+
+    semantic_lookup = dict(semantic_matches)
+    lexical_lookup = dict(lexical_matches)
+    ranked_indices = sorted(
+        fused_scores,
+        key=lambda index: (
+            fused_scores[index],
+            semantic_lookup.get(index, 0.0),
+            lexical_lookup.get(index, 0.0),
+        ),
+        reverse=True,
+    )
+    return [(index, float(fused_scores[index])) for index in ranked_indices[:top_k]]
+
+
 def _load_chunks(index_dir: Path) -> list[ChunkRecord]:
     payload = json.loads((index_dir / "chunks.json").read_text(encoding="utf-8"))
     return [ChunkRecord(**item) for item in payload]
@@ -457,6 +651,7 @@ def build_index(
     min_tokens: int,
     max_tokens: int,
     overlap_tokens: int = 0,
+    section_aware: bool = False,
     batch_size: int,
     embedding_model: str | None = None,
     dry_run: bool = False,
@@ -471,6 +666,7 @@ def build_index(
         min_tokens=min_tokens,
         max_tokens=max_tokens,
         overlap_tokens=overlap_tokens,
+        section_aware=section_aware,
     )
     if not chunks:
         raise RuntimeError("No extractable text was found in the provided PDFs.")
@@ -522,6 +718,8 @@ def retrieve_chunks(
     question: str,
     top_k: int,
     embedding_model: str | None = None,
+    retrieval_architecture: str = "semantic",
+    search_breadth: int | None = None,
     base_url: str = DEFAULT_BASE_URL,
 ) -> tuple[list[dict[str, Any]], str]:
     manifest = json.loads((index_dir / "manifest.json").read_text(encoding="utf-8"))
@@ -541,13 +739,28 @@ def retrieve_chunks(
         embedding_model=selected_embedding_model,
         batch_size=1,
     )[0]
-    store = _load_vector_backend(index_dir, vector_backend)
+    breadth = max(top_k, search_breadth or top_k)
+    normalized_mode = _normalize_retrieval_mode(retrieval_architecture)
 
-    if vector_backend == "faiss" and faiss is not None and hasattr(store, "search"):
-        scores, indices = store.search(query_vector.reshape(1, -1), top_k)
-        matches = [(int(index), float(score)) for score, index in zip(scores[0], indices[0]) if index >= 0]
+    if normalized_mode == "semantic" and vector_backend == "faiss" and faiss is not None:
+        store = _load_vector_backend(index_dir, vector_backend)
+        if hasattr(store, "search"):
+            scores, indices = store.search(query_vector.reshape(1, -1), breadth)
+            matches = [(int(index), float(score)) for score, index in zip(scores[0], indices[0]) if index >= 0]
+        else:
+            vectors = np.load(index_dir / "vectors.npy")
+            matches = search_vectors(query_vector, vectors, breadth)
     else:
-        matches = search_vectors(query_vector, store, top_k)
+        vectors = np.load(index_dir / "vectors.npy")
+        semantic_matches = search_vectors(query_vector, vectors, breadth)
+        matches = select_chunk_matches(
+            question=question,
+            chunks=chunks,
+            semantic_matches=semantic_matches,
+            top_k=top_k,
+            retrieval_architecture=retrieval_architecture,
+            search_breadth=breadth,
+        )
 
     results: list[dict[str, Any]] = []
     for chunk_index, score in matches:
@@ -572,6 +785,7 @@ def answer_question(
     question: str,
     retrieved_chunks: list[dict[str, Any]],
     text_model: str | None = None,
+    temperature: float | None = None,
     base_url: str = DEFAULT_BASE_URL,
 ) -> tuple[str, str]:
     if not retrieved_chunks:
@@ -579,29 +793,57 @@ def answer_question(
 
     client = AlbertClient(api_key=require_api_key(), base_url=base_url)
     selected_text_model = text_model or client.get_text_generation_model()
-    context_blocks = []
+
+    seen_texts: set[str] = set()
+    context_blocks: list[str] = []
     for chunk in retrieved_chunks:
+        normalized = normalize_whitespace(chunk["text"])
+        if normalized in seen_texts:
+            continue
+        seen_texts.add(normalized)
         context_blocks.append(
-            (
-                f"{chunk['chunk_id']} | {chunk['source_file']} | pages {chunk['page_start']}-{chunk['page_end']}\n"
-                f"{chunk['text']}"
-            )
+            f"[{chunk['chunk_id']}] source={chunk['source_file']} "
+            f"pages={chunk['page_start']}-{chunk['page_end']} "
+            f"score={chunk['score']:.4f}\n{chunk['text']}"
         )
     context = "\n\n".join(context_blocks)
+
+    top_score = max(chunk["score"] for chunk in retrieved_chunks) if retrieved_chunks else 0.0
+    weak_retrieval_note = ""
+    if top_score < 0.3:
+        weak_retrieval_note = (
+            "Note: the top retrieval score is low, indicating the context may not "
+            "contain sufficient evidence. If you cannot find a clear answer, say so explicitly.\n"
+        )
+
+    system_prompt = (
+        "You are an ESG analyst. Your task is to answer questions using only the supplied context. "
+        "Follow these rules strictly:\n"
+        "1. Answer ONLY from the supplied context. Do not use outside knowledge.\n"
+        "2. Clearly separate disclosed facts from your own interpretation. Precede interpretations with "
+        "'Based on the disclosed information,' or similar phrasing.\n"
+        "3. Cite supporting chunk IDs in brackets for every factual claim, e.g. [chunk-0003].\n"
+        "4. If the context is insufficient to answer the question, state that clearly: "
+        "'The provided context does not contain sufficient evidence to answer this question.'\n"
+        "5. When extracting targets, include these details when available:\n"
+        "   - metric (e.g., CO2e emissions, TRIR)\n"
+        "   - baseline value and year\n"
+        "   - target value and target year\n"
+        "   - scope (Scope 1, 2, 3) if applicable\n"
+        "   - coverage (e.g., global operations, specific region)\n"
+        "   - methodology (e.g., SBTi-validated, location-based)\n"
+        "6. Do not make unsupported claims or fabricate data.\n"
+        "7. Be concise but thorough. Prefer numbered lists for multi-part answers."
+    )
+
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are an ESG analyst. Answer only from the supplied context. "
-                "If the context is insufficient, say so clearly. Cite supporting chunk ids in brackets."
-            ),
-        },
+        {"role": "system", "content": system_prompt},
         {
             "role": "user",
-            "content": f"Question: {question}\n\nContext:\n{context}",
+            "content": f"Question: {question}\n\n{weak_retrieval_note}Context:\n{context}",
         },
     ]
-    return client.chat_completion(selected_text_model, messages), selected_text_model
+    return client.chat_completion(selected_text_model, messages, temperature=temperature), selected_text_model
 
 
 def run_rag_build(args: Any) -> int:
@@ -615,6 +857,8 @@ def run_rag_build(args: Any) -> int:
         target_tokens=args.chunk_target_tokens,
         min_tokens=args.chunk_min_tokens,
         max_tokens=args.chunk_max_tokens,
+        overlap_tokens=args.chunk_overlap_tokens,
+        section_aware=getattr(args, "section_aware", False),
         batch_size=args.batch_size,
         embedding_model=args.embedding_model,
         dry_run=args.dry_run,
@@ -628,14 +872,20 @@ def run_rag_build(args: Any) -> int:
 
 
 def run_rag_ask(args: Any) -> int:
+    retrieval_mode = getattr(args, "retrieval_mode", None) or getattr(args, "retrieval_architecture", "dense")
     retrieved, embedding_model = retrieve_chunks(
         index_dir=args.index_dir,
         question=" ".join(args.question).strip(),
         top_k=args.top_k,
         embedding_model=args.embedding_model,
+        retrieval_architecture=retrieval_mode,
+        search_breadth=getattr(args, "candidate_k", None) or args.search_breadth,
         base_url=args.base_url,
     )
-    print(f"Retrieved {len(retrieved)} chunks using {embedding_model}:")
+    print(
+        f"Retrieved {len(retrieved)} chunks using {embedding_model} "
+        f"({retrieval_mode}, breadth={getattr(args, 'candidate_k', None) or args.search_breadth or args.top_k}):"
+    )
     for chunk in retrieved:
         preview = chunk["text"][:220].replace("\n", " ")
         print(
@@ -650,6 +900,7 @@ def run_rag_ask(args: Any) -> int:
         question=" ".join(args.question).strip(),
         retrieved_chunks=retrieved,
         text_model=args.text_model,
+        temperature=args.temperature,
         base_url=args.base_url,
     )
     print(f"\nAnswer ({text_model}):\n{answer}")
