@@ -147,11 +147,57 @@ python3 -m app.cli smoke-test --top-n 10
 
 Builds a local RAG index from one or more PDFs.
 
-Use the bundled sample PDF:
-
 ```bash
 python3 -m app.cli rag-build
+python3 -m app.cli rag-build --section-aware --contextual-chunking
+python3 -m app.cli rag-build \
+  --pdf /absolute/path/to/report.pdf \
+  --chunk-target-tokens 420 --chunk-overlap-tokens 50 --section-aware
 ```
+
+### `rag-ask`
+
+Ask grounded questions with optional advanced retrieval:
+
+```bash
+# Basic
+python3 -m app.cli rag-ask "What climate targets are disclosed for 2030?"
+
+# HyDE retrieval
+python3 -m app.cli rag-ask "Scope 1 emissions target" --query-transform hyde
+
+# Multi-query retrieval with LLM reranking
+python3 -m app.cli rag-ask "What is the carbon price?" --query-transform mqr --reranker llm --top-k 5
+
+# Agentic retrieval with evidence evaluation
+python3 -m app.cli rag-ask "TRIR 2024" --agentic
+
+# With metadata filtering
+python3 -m app.cli rag-ask "emissions targets" --filter-pillar environmental --filter-year 2024
+```
+
+### `ragas-eval`
+
+Run RAGAS evaluation metrics (faithfulness, answer relevancy, context precision/recall, hallucination detection):
+
+```bash
+python3 -m app.cli ragas-eval --company TotalEnergies
+python3 -m app.cli ragas-eval --company TotalEnergies --eval-mode all --query-transform hyde
+```
+
+### `mcp` — MCP Tool Architecture
+
+Exposed as importable tools following MCP conventions:
+
+```python
+from app.mcp.server import list_tools, call_tool
+
+tools = list_tools()  # 8 ESG tools with JSON schemas
+result = call_tool("answer_question", {"question": "What is the carbon price?"})
+```
+
+Available tools: `search_esg_reports`, `retrieve_chunks`, `answer_question`, `run_ragas_eval`,
+`discover_company_reports`, `ingest_report`, `compare_companies`, `extract_esg_metrics`
 
 Use your own PDFs:
 

@@ -62,6 +62,12 @@ class ChunkRecord:
     page_end: int
     token_count: int
     text: str
+    contextual_summary: str = ""
+    esg_pillar: str = ""
+    section_title: str = ""
+    report_year: str = ""
+    contains_table: bool = False
+    contains_targets: bool = False
 
 
 class AlbertClient:
@@ -233,10 +239,81 @@ def _build_units(pages: list[PageText], max_tokens: int) -> list[tuple[int, str,
     return units
 
 
+def _detect_esg_pillar(text: str) -> str:
+    lower = text.lower()
+    env_keywords = ["emission", "carbon", "climate", "ghg", "scope 1", "scope 2", "scope 3", "energy", "biodiversity", "water", "waste", "pollution", "renewable"]
+    social_kw = ["employee", "safety", "trir", "diversity", "inclusion", "community", "worker", "human right", "labor", "stem", "volunteering", "health"]
+    gov_kw = ["board", "committee", "risk", "compliance", "audit", "tcfd", "taxonomy", "governance", "director", "executive", "shareholder", "ethics"]
+    env_score = sum(1 for kw in env_keywords if kw in lower)
+    soc_score = sum(1 for kw in social_kw if kw in lower)
+    gov_score = sum(1 for kw in gov_kw if kw in lower)
+    if env_score > soc_score and env_score > gov_score:
+        return "environmental"
+    if soc_score > env_score and soc_score > gov_score:
+        return "social"
+    if gov_score > env_score and gov_score > soc_score:
+        return "governance"
+    return ""
+
+
+def _detect_section_title(chunk_text: str) -> str:
+    lines = chunk_text.strip().split("\n")
+    for line in lines[:5]:
+        stripped = line.strip()
+        if stripped and len(stripped) < 100 and (
+            stripped.isupper() or re.match(r"^[\dIVXivx]+[\.\)\s]", stripped)
+        ):
+            return stripped
+    return ""
+
+
+def _detect_contains_table(text: str) -> bool:
+    lines = text.split("\n")
+    pipe_lines = sum(1 for line in lines if line.count("|") >= 2)
+    number_dense_lines = sum(1 for line in lines if len(re.findall(r"\d+", line)) >= 3)
+    return pipe_lines >= 2 or number_dense_lines >= 3
+
+
+def _detect_contains_targets(text: str) -> bool:
+    target_patterns = [
+        r"target.*20\d{2}", r"objective.*20\d{2}", r"goal.*20\d{2}",
+        r"reduce.*by.*20\d{2}", r"achieve.*by.*20\d{2}", r"commit.*to.*20\d{2}",
+    ]
+    lower = text.lower()
+    return any(re.search(pat, lower) for pat in target_patterns)
+
+
+def _extract_report_year(source_file: str) -> str:
+    years = re.findall(r"(20\d{2})", source_file)
+    return years[-1] if years else ""
+
+
+def _generate_contextual_summary(chunk_text: str) -> str:
+    section = _detect_section_title(chunk_text)
+    pillar = _detect_esg_pillar(chunk_text)
+    first_sentence = chunk_text.split(".")[0][:120].strip() if "." in chunk_text else chunk_text[:120].strip()
+    parts = []
+    if section:
+        parts.append(f"Section: {section}")
+    if pillar:
+        parts.append(f"ESG Pillar: {pillar}")
+    parts.append(first_sentence)
+    return " | ".join(parts)
+
+
+def _enrich_chunk_metadata(chunk: ChunkRecord) -> ChunkRecord:
+    chunk.esg_pillar = _detect_esg_pillar(chunk.text)
+    chunk.section_title = _detect_section_title(chunk.text)
+    chunk.report_year = _extract_report_year(chunk.source_file)
+    chunk.contains_table = _detect_contains_table(chunk.text)
+    chunk.contains_targets = _detect_contains_targets(chunk.text)
+    return chunk
+
+
 def _finalize_chunk(units: list[tuple[int, str, int]], chunk_number: int, source_file: str, source_path: str) -> ChunkRecord:
     chunk_text = "\n\n".join(text for _, text, _ in units).strip()
     page_numbers = [page_number for page_number, _, _ in units]
-    return ChunkRecord(
+    chunk = ChunkRecord(
         chunk_id=f"chunk-{chunk_number:04d}",
         source_file=source_file,
         source_path=source_path,
@@ -245,6 +322,7 @@ def _finalize_chunk(units: list[tuple[int, str, int]], chunk_number: int, source
         token_count=estimate_token_count(chunk_text),
         text=chunk_text,
     )
+    return _enrich_chunk_metadata(chunk)
 
 
 def _merge_chunk_records(first: ChunkRecord, second: ChunkRecord, chunk_id: str) -> ChunkRecord:
@@ -440,6 +518,7 @@ def build_chunk_records(
     max_tokens: int,
     overlap_tokens: int = 0,
     section_aware: bool = False,
+    contextual_chunking: bool = False,
 ) -> list[ChunkRecord]:
     chunk_records: list[ChunkRecord] = []
     for pdf_path in pdf_paths:
@@ -457,7 +536,14 @@ def build_chunk_records(
             )
         )
 
-    return _compact_small_chunks(chunk_records, min_tokens=min_tokens, max_tokens=max_tokens)
+    chunk_records = _compact_small_chunks(chunk_records, min_tokens=min_tokens, max_tokens=max_tokens)
+
+    if contextual_chunking:
+        for chunk in chunk_records:
+            chunk.contextual_summary = _generate_contextual_summary(chunk.text)
+            chunk = _enrich_chunk_metadata(chunk)
+
+    return chunk_records
 
 
 def _normalize_embeddings(vectors: np.ndarray) -> np.ndarray:
@@ -652,6 +738,7 @@ def build_index(
     max_tokens: int,
     overlap_tokens: int = 0,
     section_aware: bool = False,
+    contextual_chunking: bool = False,
     batch_size: int,
     embedding_model: str | None = None,
     dry_run: bool = False,
@@ -667,6 +754,7 @@ def build_index(
         max_tokens=max_tokens,
         overlap_tokens=overlap_tokens,
         section_aware=section_aware,
+        contextual_chunking=contextual_chunking,
     )
     if not chunks:
         raise RuntimeError("No extractable text was found in the provided PDFs.")
@@ -684,6 +772,8 @@ def build_index(
         "min_tokens": min_tokens,
         "max_tokens": max_tokens,
         "overlap_tokens": overlap_tokens,
+        "section_aware": section_aware,
+        "contextual_chunking": contextual_chunking,
         "vector_backend": "none",
     }
 
@@ -693,9 +783,21 @@ def build_index(
 
     client = AlbertClient(api_key=require_api_key(), base_url=base_url)
     selected_embedding_model = embedding_model or client.get_embedding_model(preferred="bge-m3")
+
+    if contextual_chunking:
+        texts_to_embed = []
+        for chunk in chunks:
+            summary = chunk.contextual_summary
+            if summary:
+                texts_to_embed.append(f"[Context: {summary}]\n\n{chunk.text}")
+            else:
+                texts_to_embed.append(chunk.text)
+    else:
+        texts_to_embed = [chunk.text for chunk in chunks]
+
     vectors = embed_texts(
         client,
-        [chunk.text for chunk in chunks],
+        texts_to_embed,
         embedding_model=selected_embedding_model,
         batch_size=batch_size,
     )
@@ -712,6 +814,27 @@ def build_index(
     return manifest
 
 
+def _filter_chunks(
+    chunks: list[dict[str, Any]],
+    *,
+    filter_year: str | None = None,
+    filter_pillar: str | None = None,
+    filter_report_type: str | None = None,
+) -> list[dict[str, Any]]:
+    filtered = chunks
+    if filter_year:
+        filtered = [c for c in filtered if filter_year in c.get("source_file", "")]
+    if filter_pillar and filter_pillar != "all":
+        pillar_keywords = {
+            "environmental": ["emission", "carbon", "climate", "ghg", "scope", "energy", "biodiversity"],
+            "social": ["employee", "safety", "trir", "diversity", "inclusion", "community", "worker"],
+            "governance": ["board", "committee", "risk", "compliance", "audit", "tcfd", "taxonomy"],
+        }
+        keywords = pillar_keywords.get(filter_pillar, [])
+        filtered = [c for c in filtered if any(kw in c["text"].lower() for kw in keywords)]
+    return filtered
+
+
 def retrieve_chunks(
     *,
     index_dir: Path,
@@ -721,6 +844,9 @@ def retrieve_chunks(
     retrieval_architecture: str = "semantic",
     search_breadth: int | None = None,
     base_url: str = DEFAULT_BASE_URL,
+    filter_year: str | None = None,
+    filter_pillar: str | None = None,
+    filter_report_type: str | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
     manifest = json.loads((index_dir / "manifest.json").read_text(encoding="utf-8"))
     vector_backend = manifest.get("vector_backend", "none")
@@ -775,9 +901,112 @@ def retrieve_chunks(
                 "page_end": chunk.page_end,
                 "token_count": chunk.token_count,
                 "text": chunk.text,
+                "contextual_summary": chunk.contextual_summary,
+                "esg_pillar": chunk.esg_pillar,
+                "section_title": chunk.section_title,
+                "report_year": chunk.report_year,
+                "contains_table": chunk.contains_table,
+                "contains_targets": chunk.contains_targets,
             }
         )
+
+    if filter_year or filter_pillar:
+        results = _filter_chunks(results, filter_year=filter_year, filter_pillar=filter_pillar, filter_report_type=filter_report_type)
+
     return results, selected_embedding_model
+
+
+def retrieve_with_transform(
+    *,
+    index_dir: Path,
+    question: str,
+    top_k: int = 5,
+    retrieval_mode: str = "dense",
+    candidate_k: int = 20,
+    query_transform: str | None = None,
+    reranker: str | None = None,
+    embedding_model: str | None = None,
+    base_url: str = DEFAULT_BASE_URL,
+) -> tuple[list[dict[str, Any]], str, list[dict[str, Any]]]:
+    diagnostics: list[dict[str, Any]] = []
+    api_key = require_api_key()
+    client = AlbertClient(api_key=api_key, base_url=base_url)
+
+    if not embedding_model:
+        embedding_model = client.get_embedding_model(preferred="bge-m3")
+    text_model = client.get_text_generation_model()
+
+    if query_transform in ("hyde", "hyde_mqr") or (query_transform == "mqr"):
+        from app.query_transforms import generate_hyde_answer, generate_multi_queries, combine_hyde_mqr
+
+        if query_transform == "hyde":
+            hyde_answer = generate_hyde_answer(question, client, text_model)
+            diagnostics.append({"transform": "hyde", "hyde_answer": hyde_answer})
+            all_questions = [hyde_answer]
+            weights = [1.0]
+        elif query_transform == "mqr":
+            mqr_queries = generate_multi_queries(question, client, text_model)
+            diagnostics.append({"transform": "mqr", "queries": mqr_queries})
+            all_questions = [q["query"] for q in mqr_queries]
+            weights = [1.0 / len(all_questions)] * len(all_questions)
+        else:
+            combined = combine_hyde_mqr(question, client, text_model)
+            diagnostics.append({"transform": "hyde_mqr", "combined": combined})
+            all_questions = combined["all_query_strings"]
+            hyde_weight = 0.4
+            mqr_weight = 0.6 / (len(all_questions) - 1) if len(all_questions) > 1 else 0.6
+            weights = [hyde_weight] + [mqr_weight] * (len(all_questions) - 1)
+
+        all_retrieved: dict[str, tuple[dict[str, Any], float]] = {}
+        for q, weight in zip(all_questions, weights):
+            chunks, _ = retrieve_chunks(
+                index_dir=index_dir,
+                question=q,
+                top_k=top_k,
+                retrieval_architecture=retrieval_mode,
+                search_breadth=candidate_k,
+                base_url=base_url,
+            )
+            for chunk in chunks:
+                cid = chunk["chunk_id"]
+                if cid in all_retrieved:
+                    existing, old_weight = all_retrieved[cid]
+                    combined_score = existing["score"] * old_weight + chunk["score"] * weight
+                    existing["score"] = combined_score / (old_weight + weight)
+                    all_retrieved[cid] = (existing, old_weight + weight)
+                else:
+                    chunk["score"] *= weight
+                    all_retrieved[cid] = (chunk, weight)
+
+        merged = sorted([c for c, _ in all_retrieved.values()], key=lambda c: c["score"], reverse=True)
+        results = merged[:top_k]
+    else:
+        results, _ = retrieve_chunks(
+            index_dir=index_dir,
+            question=question,
+            top_k=min(top_k * 3, candidate_k * 2),
+            retrieval_architecture=retrieval_mode,
+            search_breadth=candidate_k,
+            base_url=base_url,
+        )
+
+    if reranker and reranker != "none":
+        from app.reranker import rerank_candidates
+        results = rerank_candidates(
+            question=question,
+            candidates=results,
+            top_k=top_k,
+            reranker=reranker,
+            client=client,
+            embedding_model=embedding_model,
+            text_model=text_model,
+        )
+        diagnostics.append({"reranker": reranker, "reranked_count": len(results)})
+
+    if not query_transform:
+        results = results[:top_k]
+
+    return results[:top_k], embedding_model, diagnostics
 
 
 def answer_question(
@@ -859,6 +1088,7 @@ def run_rag_build(args: Any) -> int:
         max_tokens=args.chunk_max_tokens,
         overlap_tokens=args.chunk_overlap_tokens,
         section_aware=getattr(args, "section_aware", False),
+        contextual_chunking=getattr(args, "contextual_chunking", False),
         batch_size=args.batch_size,
         embedding_model=args.embedding_model,
         dry_run=args.dry_run,
@@ -873,31 +1103,81 @@ def run_rag_build(args: Any) -> int:
 
 def run_rag_ask(args: Any) -> int:
     retrieval_mode = getattr(args, "retrieval_mode", None) or getattr(args, "retrieval_architecture", "dense")
-    retrieved, embedding_model = retrieve_chunks(
-        index_dir=args.index_dir,
-        question=" ".join(args.question).strip(),
-        top_k=args.top_k,
-        embedding_model=args.embedding_model,
-        retrieval_architecture=retrieval_mode,
-        search_breadth=getattr(args, "candidate_k", None) or args.search_breadth,
-        base_url=args.base_url,
-    )
-    print(
-        f"Retrieved {len(retrieved)} chunks using {embedding_model} "
-        f"({retrieval_mode}, breadth={getattr(args, 'candidate_k', None) or args.search_breadth or args.top_k}):"
-    )
+    query_transform = getattr(args, "query_transform", None)
+    reranker = getattr(args, "reranker", None)
+    agentic = getattr(args, "agentic", False)
+    filter_year = getattr(args, "filter_year", None)
+    filter_pillar = getattr(args, "filter_pillar", None)
+    candidate_k = getattr(args, "candidate_k", None) or args.search_breadth or 12
+
+    question = " ".join(args.question).strip()
+
+    if agentic:
+        from app.agentic import run_agentic_retrieval
+        result = run_agentic_retrieval(
+            index_dir=str(args.index_dir),
+            question=question,
+            top_k=args.top_k,
+            candidate_k=candidate_k,
+            retrieval_mode=retrieval_mode,
+            base_url=args.base_url,
+        )
+        print(f"Agentic retrieval: {result['iterations']} iterations, sufficient={result['sufficient']}")
+        for step in result["trace"]:
+            print(f"  iter {step['iteration']}: {step['action']} | query='{step['query'][:60]}...' | top_score={step.get('top_score', 0):.4f}")
+        retrieved = result["final_chunks"]
+        print(f"Answer:\n{result['final_answer']}")
+        return 0
+
+    if query_transform or reranker:
+        retrieved, embedding_model, diagnostics = retrieve_with_transform(
+            index_dir=args.index_dir,
+            question=question,
+            top_k=args.top_k,
+            retrieval_mode=retrieval_mode,
+            candidate_k=candidate_k,
+            query_transform=query_transform,
+            reranker=reranker,
+            base_url=args.base_url,
+        )
+        print(f"Retrieved {len(retrieved)} chunks using {retrieval_mode} (transform={query_transform}, reranker={reranker}):")
+        if diagnostics:
+            for d in diagnostics:
+                print(f"  [{d.get('transform', d.get('reranker', ''))}] {str(d)[:200]}")
+    else:
+        retrieved, embedding_model = retrieve_chunks(
+            index_dir=args.index_dir,
+            question=question,
+            top_k=args.top_k,
+            embedding_model=args.embedding_model,
+            retrieval_architecture=retrieval_mode,
+            search_breadth=candidate_k,
+            base_url=args.base_url,
+            filter_year=filter_year,
+            filter_pillar=filter_pillar,
+        )
+        print(
+            f"Retrieved {len(retrieved)} chunks using {embedding_model} "
+            f"({retrieval_mode}, breadth={candidate_k or args.top_k}):"
+        )
+
     for chunk in retrieved:
         preview = chunk["text"][:220].replace("\n", " ")
+        meta = ""
+        if chunk.get("esg_pillar"):
+            meta += f" [{chunk['esg_pillar']}]"
+        if chunk.get("contextual_summary"):
+            meta += f" [{chunk['contextual_summary'][:60]}...]"
         print(
             f"- {chunk['chunk_id']} | score={chunk['score']:.4f} | "
-            f"{chunk['source_file']} | pages {chunk['page_start']}-{chunk['page_end']} | {preview}"
+            f"{chunk['source_file']} | pages {chunk['page_start']}-{chunk['page_end']}{meta} | {preview}"
         )
 
     if args.search_only:
         return 0
 
     answer, text_model = answer_question(
-        question=" ".join(args.question).strip(),
+        question=question,
         retrieved_chunks=retrieved,
         text_model=args.text_model,
         temperature=args.temperature,

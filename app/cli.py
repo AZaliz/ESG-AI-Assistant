@@ -14,6 +14,7 @@ from app.pipeline import AcquisitionPipeline
 from app.rag import DEFAULT_BASE_URL, DEFAULT_INDEX_DIR, run_rag_ask, run_rag_build
 from app.rag_eval import DEFAULT_EVAL_DATASET, DEFAULT_EVAL_OUTPUT, run_rag_eval, run_rag_eval_grid
 from app.rag_tune import DEFAULT_TUNE_OUTPUT, run_rag_tune
+from app.ragas_eval import DEFAULT_RAGAS_OUTPUT, run_ragas_eval
 from app.smoke_test import run_smoke_test
 from app.utils import OUTPUT_DIR, ensure_directories
 from app.web import run_web_app
@@ -85,6 +86,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--section-aware",
         action="store_true",
         help="Enable section/header-aware chunking to align chunks with document structure.",
+    )
+    rag_build.add_argument(
+        "--contextual-chunking",
+        action="store_true",
+        help="Generate contextual summaries for each chunk and embed contextualized versions.",
     )
     rag_build.add_argument(
         "--embedding-model",
@@ -166,6 +172,32 @@ def build_parser() -> argparse.ArgumentParser:
         "--search-only",
         action="store_true",
         help="Only retrieve chunks and skip the final LLM answer step.",
+    )
+    rag_ask.add_argument(
+        "--query-transform",
+        choices=["none", "hyde", "mqr", "hyde_mqr"],
+        default=None,
+        help="Apply query transformation before retrieval (HyDE, MQR, or combined).",
+    )
+    rag_ask.add_argument(
+        "--reranker",
+        choices=["none", "lexical", "embedding", "llm"],
+        default=None,
+        help="Apply reranking stage after broad retrieval.",
+    )
+    rag_ask.add_argument(
+        "--agentic",
+        action="store_true",
+        help="Enable agentic retrieval loop with evidence evaluation and query repair.",
+    )
+    rag_ask.add_argument(
+        "--filter-year",
+        help="Filter retrieval to chunks from a specific report year.",
+    )
+    rag_ask.add_argument(
+        "--filter-pillar",
+        choices=["environmental", "social", "governance", "all"],
+        help="Filter retrieval to specific ESG pillar.",
     )
 
     rag_web = subparsers.add_parser("rag-web", help="Launch the local browser UI for ESG RAG")
@@ -437,6 +469,65 @@ def build_parser() -> argparse.ArgumentParser:
         help="Albert API base URL.",
     )
 
+    ragas_eval = subparsers.add_parser("ragas-eval", help="Run RAGAS evaluation metrics on the ESG QA dataset")
+    ragas_eval.add_argument(
+        "--index-dir",
+        type=Path,
+        default=DEFAULT_INDEX_DIR,
+        help="Directory containing the built RAG index.",
+    )
+    ragas_eval.add_argument(
+        "--dataset",
+        type=Path,
+        default=DEFAULT_EVAL_DATASET,
+        help="CSV dataset containing ESG evaluation questions.",
+    )
+    ragas_eval.add_argument(
+        "--company",
+        help="Company to evaluate (required).",
+    )
+    ragas_eval.add_argument(
+        "--top-k",
+        type=int,
+        default=5,
+        help="How many chunks to retrieve per question.",
+    )
+    ragas_eval.add_argument(
+        "--retrieval-mode",
+        default="dense",
+        choices=["dense", "lexical", "hybrid"],
+        help="Retrieval mode.",
+    )
+    ragas_eval.add_argument(
+        "--candidate-k",
+        type=int,
+        default=15,
+        help="Candidate retrieval breadth.",
+    )
+    ragas_eval.add_argument(
+        "--eval-mode",
+        default="ragas",
+        choices=["retrieval", "answer", "ragas", "all"],
+        help="Evaluation mode.",
+    )
+    ragas_eval.add_argument(
+        "--query-transform",
+        choices=["none", "hyde", "mqr", "hyde_mqr"],
+        default=None,
+        help="Query transformation to apply.",
+    )
+    ragas_eval.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_RAGAS_OUTPUT,
+        help="Where to save the RAGAS evaluation JSON.",
+    )
+    ragas_eval.add_argument(
+        "--base-url",
+        default=DEFAULT_BASE_URL,
+        help="Albert API base URL.",
+    )
+
     ingest_targets = subparsers.add_parser(
         "ingest-target-reports", help="Download and store the curated ESG report set"
     )
@@ -530,6 +621,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "rag-eval-grid":
         return run_rag_eval_grid(args)
+
+    if args.command == "ragas-eval":
+        return run_ragas_eval(args)
 
     if args.command == "rag-tune":
         return run_rag_tune(args)
