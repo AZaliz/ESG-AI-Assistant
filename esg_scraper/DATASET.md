@@ -16,7 +16,8 @@ It is distributed out-of-band instead.
 
 ## Download
 
-> **Link:** _<!-- TODO: paste the external share URL (Google Drive / etc.) here -->_
+> **Link:** <https://drive.google.com/drive/folders/19Da8jOl5p3iJAcpuS7SUt6smdo73hEyW?usp=sharing>
+> (Google Drive folder — download `data_pdfs_snapshot_2026-05-19.zip`, then verify with the SHA-256 above.)
 
 ## Verify & extract
 
