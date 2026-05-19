@@ -1,6 +1,6 @@
 # ESG Document Scraper
 
-Multi-company scraper for corporate sustainability documents. Targets 10 European companies (TotalEnergies, BNP Paribas, Airbus, Danone, Engie, Schneider Electric, L'Oréal, Volkswagen, Siemens, Iberdrola) for the FTD Master AI-Powered ESG Analysis course.
+Multi-company scraper for corporate sustainability documents. Targets 10 European companies (TotalEnergies, BNP Paribas, Airbus, Danone, Engie, Schneider Electric, L'Oréal, Volkswagen, Siemens, Enel) for the FTD Master AI-Powered ESG Analysis course. (Enel replaced Iberdrola — see [Note on coverage](#note-on-coverage).)
 
 ## Setup
 
@@ -9,6 +9,12 @@ pip install -r requirements.txt
 ```
 
 Requires Python 3.10+ (uses modern type hints).
+
+For development, install from `requirements.txt`. For exact reproduction of
+the current pre-embedding corpus, install from `requirements_locked.txt`
+(a `pip freeze` of the environment that built the committed `chunks.jsonl`).
+Keep both — `requirements.txt` is the human-readable loose pin,
+`requirements_locked.txt` is the byte-reproduction pin.
 
 ## Project structure
 
@@ -27,13 +33,14 @@ Requires Python 3.10+ (uses modern type hints).
         ├── totalenergies.py
         ├── engie.py
         ├── bnp_paribas.py
-        ├── iberdrola.py
         ├── airbus.py
         ├── danone.py
         ├── loreal.py
         ├── volkswagen.py
         ├── siemens.py
-        └── schneider.py
+        ├── schneider.py
+        ├── enel.py
+        └── eurlex.py             # EU regulations / framework standards
 ```
 
 ## Usage
@@ -49,7 +56,7 @@ python main.py --all --dry-run
 python main.py --company totalenergies
 
 # 4. Real run — multiple specific companies
-python main.py --company engie --company bnp_paribas --company iberdrola
+python main.py --company engie --company bnp_paribas --company enel
 
 # 5. Real run — all 10 companies, parallel
 python main.py --all --workers 3
@@ -156,14 +163,73 @@ Most companies have full discovery + a hardcoded fallback. Three exceptions wher
 **Requires the `brotli` package** (in `requirements.txt`). Without it, the WAFs
 that check for `Accept-Encoding: br` will return 403.
 
+## Note on coverage
+
+Iberdrola was originally on the target list as the European utility
+representative, but its corporate site blocks scraping from non-residential
+IPs (Akamai WAF — it checks the connection's JA3 TLS fingerprint, not just
+HTTP headers; bypassing it would require `curl_cffi` or Playwright). **Enel
+(Italy) was substituted**, providing equivalent ESRS E1/E4 coverage with
+stronger climate-policy-advocacy disclosure. The Iberdrola extractor is not
+registered in the active scraper config and its module has been removed from
+the tree; it can be re-added under `extractors/iberdrola.py` to revive it.
+
 ## Known limitations
 
-- **Iberdrola is blocked.** Their Akamai bot manager checks the TLS
-  fingerprint (JA3) of the connection, not just HTTP headers. The standard
-  `requests` library uses OpenSSL's fingerprint, which doesn't match Chrome's.
-  Fix would require `curl_cffi` (lightweight) or Playwright (heavier).
 - Schneider Electric discovers ~6 docs but the asset CDN 403s on a couple of
   PDF downloads. The critical FY2024 Sustainability Report comes through.
 
-For the 9 reachable companies (no `--with-policies`), expect ~190 documents
+For the 10 reachable companies (no `--with-policies`), expect ~190 documents
 totaling ~1.9 GB. Full run takes ~3 minutes on a typical residential connection.
+
+## Reproducibility
+
+The pre-embedding corpus (`data/chunks/chunks.jsonl`) is reproducible
+from three frozen inputs:
+ - the code in this repository
+ - the PDF/transcript inputs in `data/pdfs/` and `data/earnings_calls/`
+   (snapshot date: 2026-05-19)
+ - the pinned environment in `requirements_locked.txt`
+
+Given those inputs, the build chain is two steps (run from `esg_scraper/`):
+
+```bash
+python -m parser.build_index
+python ingest_earnings.py
+```
+
+This produces `chunks.jsonl` with the same chunk_id set as the
+committed corpus. Tested end-to-end on CSDDD: 0 boundary drift,
+chunk_id list byte-identical pre/post rechunk.
+
+**Caveat:** this guarantee holds for the frozen input snapshot only.
+Re-scraping ESG reports from corporate websites will produce different
+PDFs (companies reissue reports, restate prior-year figures, change
+layouts). A naive re-scrape followed by full rebuild may produce
+different chunk boundaries even with identical code. To reproduce the
+current corpus exactly, use the frozen PDF set, not a fresh scrape.
+
+## Input snapshots
+
+The full frozen input set used to build the current corpus is not
+committed to git (~2.1 GB). It is archived separately as
+`data_pdfs_snapshot_2026-05-19.zip` (despite the name, this is the
+complete build-input set, not only PDFs):
+
+ - `data/pdfs/**` — 252 scraped PDFs (`parser.build_index` input)
+ - `data/manifest.csv` — build driver: doc selection, metadata, and the
+   CSDDD `narrative_only` URL match
+ - `data/earnings_calls/**` — 100 transcripts + earnings manifest
+   (`ingest_earnings.py` input)
+
+**SHA-256:** `ab5513eb3e892250fe922ab5828a7c68d65c729b6cc8ddb3dff67c991f31a0c3`
+(also recorded in the sidecar `data_pdfs_snapshot_2026-05-19.zip.sha256`).
+Verify the archive before trusting a reproduction:
+
+```bash
+sha256sum -c data_pdfs_snapshot_2026-05-19.zip.sha256
+```
+
+Contact the project owner for the archive, or re-scrape using
+`python main.py --all` — note that re-scraping may produce different
+PDFs from the frozen snapshot (see [Reproducibility](#reproducibility)).

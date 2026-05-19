@@ -7,10 +7,7 @@ Add a new company by:
 from .extractors.totalenergies import TotalEnergiesScraper
 from .extractors.engie import EngieScraper
 from .extractors.bnp_paribas import BNPParibasScraper
-# Iberdrola intentionally NOT registered: its site blocks scraping from
-# non-residential IPs (Akamai WAF / JA3 TLS fingerprinting). Enel was
-# substituted as the European utility. extractors/iberdrola.py is kept out
-# of the tree for future revival. See README "Note on coverage".
+from .extractors.iberdrola import IberdrolaScraper
 from .extractors.airbus import AirbusScraper
 from .extractors.danone import DanoneScraper
 from .extractors.loreal import LOrealScraper
@@ -24,6 +21,7 @@ SCRAPERS = {
     "totalenergies":    TotalEnergiesScraper,
     "engie":            EngieScraper,
     "bnp_paribas":      BNPParibasScraper,
+    "iberdrola":        IberdrolaScraper,
     "airbus":           AirbusScraper,
     "danone":           DanoneScraper,
     "loreal":           LOrealScraper,

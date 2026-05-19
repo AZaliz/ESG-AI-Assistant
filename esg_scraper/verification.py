@@ -13,6 +13,15 @@ Usage:
     python quality_check.py --manifest data/manifest.csv
     python quality_check.py --manifest data/manifest.csv --verify-files
 """
+# --- UTF-8 console bootstrap: Windows wraps stdout in cp1252, which can't
+# encode →, —, É (L'Oréal), etc. Force UTF-8 so output never crashes. ---
+import sys as _sys
+for _s in (_sys.stdout, _sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+
 import argparse
 import hashlib
 import sys
@@ -23,8 +32,10 @@ import pandas as pd
 
 # Configuration ────────────────────────────────────────────────────────────
 
+# Iberdrola dropped: site blocks non-residential IPs (Akamai WAF). Enel
+# substituted as the European utility. See README "Note on coverage".
 EXPECTED_COMPANIES = {
-    "Airbus", "BNP Paribas", "Danone", "Enel", "Engie", "Iberdrola",
+    "Airbus", "BNP Paribas", "Danone", "Enel", "Engie",
     "L'Oréal", "Schneider Electric", "Siemens", "TotalEnergies",
     "Volkswagen",
 }

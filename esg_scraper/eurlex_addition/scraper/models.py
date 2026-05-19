@@ -21,15 +21,8 @@ DOC_TYPES = {
     "vigilance_plan",         # French Duty of Vigilance Law
     "policy",                 # Code of conduct, sector policies
     "regulation",             # EU regulations, framework standards (ESRS, GHG Protocol, etc.)
-    "earnings_call",          # Quarterly/annual earnings call transcripts (.txt)
     "other",
 }
-
-# doc_types that count as "ESG reports" for the RAG corpus.
-# Excludes `policy` (codes of conduct, supplier codes, tax strategy, water
-# policy, etc.) — these are governance artefacts, not disclosure reports.
-# Override at runtime with main.py's --with-policies flag.
-ESG_REPORT_DOC_TYPES = DOC_TYPES - {"policy"}
 
 # Priority levels for RAG indexing
 PRIORITY_PRIMARY = 1    # core ESRS doc — always index

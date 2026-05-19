@@ -13,6 +13,15 @@ Usage:
     # All 10 companies, full download
     python main.py --all
 """
+# --- UTF-8 console bootstrap: Windows wraps stdout in cp1252, which can't
+# encode →, —, É (L'Oréal), etc. Force UTF-8 so output never crashes. ---
+import sys as _sys
+for _s in (_sys.stdout, _sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+
 import argparse
 import csv
 import logging

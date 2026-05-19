@@ -209,3 +209,9 @@ __marimo__/
 # Project outputs
 outputs/
 data/
+
+# ESG scraper: large data snapshots & scratch spot-check dumps (not for git)
+*.zip
+*.zip.sha256
+esg_scraper/_sc_out.txt
+esg_scraper/_spotcheck*.txt
